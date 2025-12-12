@@ -44,7 +44,7 @@ class GridMap():
             # Occupied cell: last one
             x, y = points[-1]
             if 0 <= x < MAP_SIZE and 0 <= y < MAP_SIZE:
-                self.log_odds[y, x] += 0.5
+                self.log_odds[y, x] += 0.8
 
     def update_grid_map(self):
         """Update grid_map from log-odds obstacle_score_map.
@@ -160,7 +160,6 @@ class GridMap():
                     ):
                         frontier_cells.append((x, y))
         
-        print(f"[info] Detected {len(frontier_cells)} frontier cells")
         # Group frontier cells into regions using BFS clustering
         frontier_regions = self._cluster_frontiers_bfs(frontier_cells)
         self.frontier_regions = frontier_regions

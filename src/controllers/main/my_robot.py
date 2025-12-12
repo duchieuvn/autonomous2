@@ -5,11 +5,6 @@ import cv2
 import random
 import os
 import sys
-CURRENT_DIR = os.path.dirname(__file__)
-CONTROLLERS_DIR = os.path.dirname(CURRENT_DIR)
-if CONTROLLERS_DIR not in sys.path:
-    sys.path.append(CONTROLLERS_DIR)
-
 from vis import MapVisualizer
 import pygame
 import time
@@ -513,7 +508,6 @@ class MyRobot(Supervisor):
                 and not (self.end_point and self.start_point):
                 # Detect and select frontier
                 frontier_regions = map_object.detect_frontiers()
-                print(frontier_regions)
                 
                 if map_diff > 0.005 or chosen_frontier_count < EXPLORATION_MAP_UPDATE_FREQ:
                     chosen_frontier = self.select_frontier_target(frontier_regions)
