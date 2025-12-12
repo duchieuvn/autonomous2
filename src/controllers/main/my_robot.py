@@ -68,7 +68,6 @@ class MyRobot(Supervisor):
                         if red_wall:
                             self.camera_detection_signal = 'red_wall'
                             print("[Camera Thread] 🔴 Red wall signal set!")
-                            time.sleep(1.0)  # Brief pause after setting signal
                             continue
 
                         # Check for columns
@@ -604,10 +603,10 @@ class MyRobot(Supervisor):
                         print('[Main Thread] 🔴 Handling red wall detection!')
                         self.align_to_red_wall()
                         # print('Done align to red wall')
-                        random_duration = random.randint(200, 300)
+                        random_duration = random.randint(700, 900)
                         self.turn_right_milisecond(random_duration)
-                        self.step(200)
                         print('----random turn after red wall done----')
+                        time.sleep(2)
 
                     elif isinstance(signal, tuple) and signal[0] == 'column':
                         _, color, column_distance = signal
@@ -987,7 +986,7 @@ class MyRobot(Supervisor):
     
     def recover_from_stuck(self):
         self.set_robot_velocity(-8, -8)
-        self.step(200)
+        self.step(300)
         print('Stuck -> Moved back')
 
         if self.last_turn == 'right':
