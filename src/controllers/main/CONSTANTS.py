@@ -6,7 +6,7 @@ MAP_SIZE = 300 # 10m x 10m grid map
 # 300 pixels = 10m, so each pixel is 0.0333m = 3.33cm
 RESOLUTION = 10.0 / MAP_SIZE
 
-INITIAL_LOG_ODD = 2
+INITIAL_LOG_ODD = 0
 OBSTACLE = 1
 FREESPACE = 0
 UNKNOWN = 255

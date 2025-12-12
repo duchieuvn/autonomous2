@@ -160,6 +160,7 @@ class GridMap():
                     ):
                         frontier_cells.append((x, y))
         
+        print(f"[info] Detected {len(frontier_cells)} frontier cells")
         # Group frontier cells into regions using BFS clustering
         frontier_regions = self._cluster_frontiers_bfs(frontier_cells)
         self.frontier_regions = frontier_regions
