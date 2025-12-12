@@ -214,7 +214,6 @@ class MyRobot(Supervisor):
     def follow_local_target(self, map_target):
         # Return True if the robot reached the target
         if self.get_map_distance(map_target) < PATH_FOLLOWING_TARGET_REACH_DISTANCE:
-            print("Reached local target")
             # self.stop_motor()
             return True
         
@@ -679,7 +678,6 @@ class MyRobot(Supervisor):
     def frontier_following(self, path, vis=None):
         stuck_counter = 0
         for target in path[5::5]:
-            print(target)
             while self.step() != -1:
                 last_position = self.get_position()
                 for event in pygame.event.get(): 
@@ -706,7 +704,6 @@ class MyRobot(Supervisor):
                         print("Stuck in frontier_following, drop path...")
                         self.stop_motor()
                         self.lidar_update_map()
-                        print("Map updated")
                         self.recover_from_stuck()
                         
                         return
