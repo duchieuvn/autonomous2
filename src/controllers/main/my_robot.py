@@ -26,6 +26,7 @@ class MyRobot(Supervisor):
         self.start_point = None
         self.end_point = None
         self.path = []
+        self.chosen_frontier_count = 0
         # closure marking cooldown to avoid repeated marks when seeing same wall
         self.last_closure_time = 0.0
         self.closure_cooldown = 5.0  # seconds
@@ -459,28 +460,51 @@ class MyRobot(Supervisor):
         map_position = self.get_map_position()
         self.map_object.lidar_update_grid_map(map_position, points)
 
+    def handle_frontier_exploration(self, count, map_diff, vis):
+        frontier_regions = []
+        chosen_frontier = None
+        path_to_frontier = None
+
+        if count >= EXPLORATION_START_FRONTIER_AFTER and count % EXPLORATION_FRONTIER_SELECTION_FREQ == 0 \
+            and not (self.end_point and self.start_point):
+            frontier_regions = self.map_object.detect_frontiers()
+
+            if map_diff > 0.005 or self.chosen_frontier_count < EXPLORATION_MAP_UPDATE_FREQ:
+                chosen_frontier = self.select_frontier_target(frontier_regions)
+                self.chosen_frontier_count += 1
+            else:
+                print("Map is not explored enough, select different frontier region")
+                chosen_frontier = self.select_frontier_target2(frontier_regions)
+                self.chosen_frontier_count = 0
+
+            if chosen_frontier:
+                path_to_frontier = self.map_object.find_path_for_frontier(self.get_map_position(), chosen_frontier)
+                if path_to_frontier:
+                    self.frontier_following(path_to_frontier, vis)
+                    # self.path_following_pipeline(path_to_frontier, vis if debug else None)
+
+        return frontier_regions, chosen_frontier, path_to_frontier
+
     def explore(self, debug=True):
         '''
         1. Find blue
         2. Find yellow
         3. Explore randomly, occasionally follow frontier targets
         '''
+        
         map_object = self.map_object
         vis = None
         if debug:
             vis = MapVisualizer()
 
-        last_position = self.get_position() - 999
         count = 0
-        frontier_target = None  # store the current frontier target
         chosen_frontier = None  # store the currently selected frontier
         # planning results/state holders - initialize to avoid stale values between iterations
         path_to_frontier = None
-        filtered_frontiers = None
         previous_map = map_object.grid_map.copy()
-        chosen_frontier_count = 0
         map_diff = 1.0
         frontier_regions = []
+        
         while self.step(self.time_step) != -1 and len(self.path) == 0:
             if debug:
                 for event in pygame.event.get(): 
@@ -501,25 +525,8 @@ class MyRobot(Supervisor):
             self.set_robot_velocity(MOTOR_VELOCITY_FORWARD, MOTOR_VELOCITY_FORWARD)
 
             map_diff = utils.percentage_map_differences(previous_map, map_object.grid_map)
-            # --- Frontier-based exploration logic ---
-            # Only select and follow frontiers periodically, and only if not already following one
-            if count >= EXPLORATION_START_FRONTIER_AFTER and count % EXPLORATION_FRONTIER_SELECTION_FREQ == 0 \
-                and not (self.end_point and self.start_point):
-                # Detect and select frontier
-                frontier_regions = map_object.detect_frontiers()
-                
-                if map_diff > 0.005 or chosen_frontier_count < EXPLORATION_MAP_UPDATE_FREQ:
-                    chosen_frontier = self.select_frontier_target(frontier_regions)
-                    chosen_frontier_count += 1
-                else:
-                    print("Map is not explored enough, select different frontier region")
-                    chosen_frontier = self.select_frontier_target2(frontier_regions)
-                    chosen_frontier_count = 0
+            frontier_regions, chosen_frontier, path_to_frontier = self.handle_frontier_exploration(count, map_diff, vis)
 
-                path_to_frontier = map_object.find_path_for_frontier(self.get_map_position(), chosen_frontier)
-                if path_to_frontier:
-                    self.frontier_following(path_to_frontier, vis if debug else None)
-                    # self.path_following_pipeline(path_to_frontier, vis if debug else None)
             previous_map = map_object.grid_map.copy()
             
             if debug:
@@ -986,4 +993,3 @@ class MyRobot(Supervisor):
         centroid_y = int(np.mean(region_cells[:, 1]) + random.randint(-5, 5))
         
         return (centroid_x, centroid_y)
-    
