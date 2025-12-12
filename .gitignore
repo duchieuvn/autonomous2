@@ -1,0 +1,5 @@
+__pycache__/
+worlds/
+venv/
+*.pyc
+*.png

@@ -1,0 +1,25 @@
+#VRML_SIM R2025a utf8
+PROTO protoName [
+  protoFields
+]
+{
+  WallShort Solid {
+  translation 0 0 0.25
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 4 1
+        }
+      }
+      geometry Box {
+        size 2 0.05 0.5
+      }
+    }
+  ]
+  name "BoundingBox"
+  boundingObject Box {
+    size 2 0.05 0.5
+  }
+}
+}
