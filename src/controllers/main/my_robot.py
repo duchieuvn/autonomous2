@@ -8,7 +8,8 @@ import sys
 from vis import MapVisualizer
 import pygame
 import time
-import utils 
+import utils
+import threading
 from CONSTANTS import *
 from map import GridMap
 
@@ -26,12 +27,62 @@ class MyRobot(Supervisor):
         self.start_point = None
         self.end_point = None
         self.path = []
+        self.chosen_frontier_count = 0
         # closure marking cooldown to avoid repeated marks when seeing same wall
         self.last_closure_time = 0.0
         self.closure_cooldown = 5.0  # seconds
         # Turning cooldown: track steps since turning stopped to allow sensor stabilization
         self.steps_since_turning = 0
         self.is_currently_turning = False
+        # Multi-threading for continuous detection monitoring
+        self.detection_thread = None
+        self.detection_running = False
+        self.camera_detection_signal = None  # Shared variable for thread communication
+        self.detection_lock = threading.Lock()  # Lock for thread synchronization
+
+    def start_detection_thread(self):
+        """Start the continuous detection thread for red walls and columns."""
+        if self.detection_thread and self.detection_thread.is_alive():
+            return
+        self.detection_running = True
+        self.detection_thread = threading.Thread(target=self.detection_loop, daemon=True)
+        self.detection_thread.start()
+        print("[Detection] Started continuous detection thread")
+
+    def stop_detection_thread(self):
+        """Stop the detection thread."""
+        self.detection_running = False
+        if self.detection_thread:
+            self.detection_thread.join(timeout=1.0)
+            print("[Detection] Stopped detection thread")
+
+    def detection_loop(self):
+        """Continuous detection loop with shared variable communication."""
+        while self.detection_running:
+            try:
+                # Only write to shared variable if it's None (main thread has processed previous signal)
+                with self.detection_lock:
+                    if self.camera_detection_signal is None:
+                        # Check for red wall
+                        red_wall = self.there_is_red_wall()
+                        if red_wall:
+                            self.camera_detection_signal = 'red_wall'
+                            print("[Camera Thread] 🔴 Red wall signal set!")
+                            continue
+
+                        # Check for columns
+                        color = self.detect_column()
+                        if color and ((color == 'blue' and not self.start_point) or (color == 'yellow' and not self.end_point)):
+                            column_distance = self.estimate_column_distance(color)
+                            if column_distance and column_distance < 80:
+                                self.camera_detection_signal = ('column', color, column_distance)
+                                print(f"[Camera Thread] 📍 {color.capitalize()} column signal set at {column_distance}cm!")
+
+                time.sleep(0.5)  # Check every 500ms
+
+            except Exception as e:
+                print(f"[Detection] Error in detection loop: {e}")
+                time.sleep(1.0)
 
     def is_turning(self):
         # Check if the robot is turning, with 10-step cooldown after turning stops
@@ -267,7 +318,28 @@ class MyRobot(Supervisor):
         frame = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         return hsv
+    
+    def get_bottom_half_hsv(self):
+        hsv = self.get_hsv_image()
+        if hsv is None:
+            return None
 
+        height, width, _ = hsv.shape
+        bottom_half = hsv[height // 2:, :]
+        return bottom_half
+    
+    def get_camera_depth_cm(self):
+        depth_data = self.camera_depth.getRangeImage()
+        if depth_data == None:
+            return None
+        
+        w_d = self.camera_depth.getWidth()
+        h_d = self.camera_depth.getHeight()
+        depth_image = np.array(depth_data).reshape((h_d, w_d))
+        depth_cm = depth_image * 100 # Meter -> Centimeter
+        depth_img = np.where(np.isinf(depth_cm), 9999, depth_cm)
+        depth_img = depth_img.astype(np.uint16)
+        return depth_img
     
     def there_is_red_wall(self):
         hsv = self.get_hsv_image()
@@ -276,10 +348,10 @@ class MyRobot(Supervisor):
 
         height, width, _ = hsv.shape
 
-        lower_red1 = RED_WALL_HSV_LOWER1
-        upper_red1 = RED_WALL_HSV_UPPER1
-        lower_red2 = RED_WALL_HSV_LOWER2
-        upper_red2 = RED_WALL_HSV_UPPER2
+        lower_red1 = np.array(RED_WALL_HSV_LOWER1)
+        upper_red1 = np.array(RED_WALL_HSV_UPPER1)
+        lower_red2 = np.array(RED_WALL_HSV_LOWER2)
+        upper_red2 = np.array(RED_WALL_HSV_UPPER2)
 
         mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
         mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
@@ -335,8 +407,13 @@ class MyRobot(Supervisor):
         error_threshold = ALIGN_RED_WALL_ERROR_THRESHOLD
         last_error = 0
         backward_speed = RED_WALL_ALIGNMENT_SPEED
-
+        align_step_count = 0
         while self.step(self.time_step) != -1:
+            align_step_count += 1
+            if align_step_count > 100:
+                print("Alignment timeout reached.")
+                self.stop_motor()
+                break
             hsv_img = self.get_hsv_image()
             if hsv_img is None:
                 self.stop_motor()
@@ -459,33 +536,83 @@ class MyRobot(Supervisor):
         map_position = self.get_map_position()
         self.map_object.lidar_update_grid_map(map_position, points)
 
+    def handle_frontier_exploration(self, count, map_diff, vis):
+        frontier_regions = []
+        chosen_frontier = None
+        path_to_frontier = None
+
+        if count >= EXPLORATION_START_FRONTIER_AFTER and count % EXPLORATION_FRONTIER_SELECTION_FREQ == 0 \
+            and not (self.end_point and self.start_point):
+            frontier_regions = self.map_object.detect_frontiers()
+
+            if map_diff > 0.005 or self.chosen_frontier_count < EXPLORATION_MAP_UPDATE_FREQ:
+                chosen_frontier = self.select_frontier_target(frontier_regions)
+                self.chosen_frontier_count += 1
+            else:
+                print("Map is not explored enough, select different frontier region")
+                chosen_frontier = self.select_frontier_target2(frontier_regions)
+                self.chosen_frontier_count = 0
+
+            if chosen_frontier:
+                path_to_frontier = self.map_object.find_path_for_frontier(self.get_map_position(), chosen_frontier)
+                if path_to_frontier:
+                    self.frontier_following(path_to_frontier, vis)
+                    # self.path_following_pipeline(path_to_frontier, vis if debug else None)
+
+        return frontier_regions, chosen_frontier, path_to_frontier
+
     def explore(self, debug=True):
         '''
         1. Find blue
         2. Find yellow
         3. Explore randomly, occasionally follow frontier targets
         '''
+
+        # Start continuous detection thread before any setup
+        self.start_detection_thread()
+
         map_object = self.map_object
         vis = None
         if debug:
             vis = MapVisualizer()
 
-        last_position = self.get_position() - 999
         count = 0
-        frontier_target = None  # store the current frontier target
         chosen_frontier = None  # store the currently selected frontier
         # planning results/state holders - initialize to avoid stale values between iterations
         path_to_frontier = None
-        filtered_frontiers = None
         previous_map = map_object.grid_map.copy()
-        chosen_frontier_count = 0
         map_diff = 1.0
         frontier_regions = []
+
         while self.step(self.time_step) != -1 and len(self.path) == 0:
             if debug:
-                for event in pygame.event.get(): 
+                for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         exit()
+
+
+
+            # Check for camera detection signals from background thread
+            with self.detection_lock:
+                if self.camera_detection_signal is not None:
+                    signal = self.camera_detection_signal
+                    self.camera_detection_signal = None  # Reset signal to allow camera thread to set new ones
+                    print(f"[Main Thread] Processing signal: {signal}")
+
+                    if signal == 'red_wall':
+                        print('[Main Thread] 🔴 Handling red wall detection!')
+                        self.align_to_red_wall()
+                        # print('Done align to red wall')
+                        random_duration = random.randint(700, 900)
+                        self.turn_right_milisecond(random_duration)
+                        print('----random turn after red wall done----')
+                        time.sleep(2)
+
+                    elif isinstance(signal, tuple) and signal[0] == 'column':
+                        _, color, column_distance = signal
+                        print(f"[Main Thread] 📍 Handling {color} column detection at {column_distance}cm!")
+                        # self.align_to_column(color)
+                        # self.mark_on_map(column_distance, color)
 
             # Mapping - update less frequently to avoid drag/smearing artifacts
             if count % EXPLORATION_MAP_UPDATE_FREQ == 0 and not self.is_turning():
@@ -501,27 +628,10 @@ class MyRobot(Supervisor):
             self.set_robot_velocity(MOTOR_VELOCITY_FORWARD, MOTOR_VELOCITY_FORWARD)
 
             map_diff = utils.percentage_map_differences(previous_map, map_object.grid_map)
-            # --- Frontier-based exploration logic ---
-            # Only select and follow frontiers periodically, and only if not already following one
-            if count >= EXPLORATION_START_FRONTIER_AFTER and count % EXPLORATION_FRONTIER_SELECTION_FREQ == 0 \
-                and not (self.end_point and self.start_point):
-                # Detect and select frontier
-                frontier_regions = map_object.detect_frontiers()
-                
-                if map_diff > 0.005 or chosen_frontier_count < EXPLORATION_MAP_UPDATE_FREQ:
-                    chosen_frontier = self.select_frontier_target(frontier_regions)
-                    chosen_frontier_count += 1
-                else:
-                    print("Map is not explored enough, select different frontier region")
-                    chosen_frontier = self.select_frontier_target2(frontier_regions)
-                    chosen_frontier_count = 0
+            frontier_regions, chosen_frontier, path_to_frontier = self.handle_frontier_exploration(count, map_diff, vis)
 
-                path_to_frontier = map_object.find_path_for_frontier(self.get_map_position(), chosen_frontier)
-                if path_to_frontier:
-                    self.frontier_following(path_to_frontier, vis if debug else None)
-                    # self.path_following_pipeline(path_to_frontier, vis if debug else None)
             previous_map = map_object.grid_map.copy()
-            
+
             if debug:
                 display_map = map_object.grid_map.copy()
                 frontier_overlay_points = []
@@ -580,6 +690,8 @@ class MyRobot(Supervisor):
 
             count += 1
 
+        # Clean up detection thread
+        self.stop_detection_thread()
         self.stop_motor()
         return self.path
 
@@ -874,7 +986,7 @@ class MyRobot(Supervisor):
     
     def recover_from_stuck(self):
         self.set_robot_velocity(-8, -8)
-        self.step(200)
+        self.step(300)
         print('Stuck -> Moved back')
 
         if self.last_turn == 'right':
@@ -986,4 +1098,3 @@ class MyRobot(Supervisor):
         centroid_y = int(np.mean(region_cells[:, 1]) + random.randint(-5, 5))
         
         return (centroid_x, centroid_y)
-    
