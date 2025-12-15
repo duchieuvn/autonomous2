@@ -26,6 +26,8 @@ class MyRobot(Supervisor):
         self.last_turn = 'right'
         self.start_point = None
         self.end_point = None
+        self.blue_estimated_pos = np.array([0,0])
+        self.yellow_estimated_pos = np.array([0,0])
         self.path = []
         self.chosen_frontier_count = 0
         # closure marking cooldown to avoid repeated marks when seeing same wall
@@ -583,15 +585,15 @@ class MyRobot(Supervisor):
     
     def update_column_position(self, color, position):
         if color == 'blue':
-            if self.start_point is None:
-                self.start_point = position
+            if self.blue_estimated_pos is None:
+                self.blue_estimated_pos = position
             else:    
-                self.start_point = 0.3 * np.array(self.start_point) + 0.7 * np.array(position)  
+                self.blue_estimated_pos = 0.3 * np.array(self.blue_estimated_pos) + 0.7 * np.array(position)  
         if color == 'yellow':
-            if self.end_point is None:
-                self.end_point = position
+            if self.yellow_estimated_pos is None:
+                self.yellow_estimated_pos = position
             else:
-                self.end_point = 0.3 * np.array(self.end_point) + 0.7 * np.array(position)
+                self.yellow_estimated_pos = 0.3 * np.array(self.yellow_estimated_pos) + 0.7 * np.array(position)
 
     def explore(self, debug=True):
         '''
@@ -663,8 +665,8 @@ class MyRobot(Supervisor):
 
             # --- Random exploration movement ---
             # if map_diff > 0.02:
-            # self.adapt_direction()
-            # self.set_robot_velocity(MOTOR_VELOCITY_FORWARD, MOTOR_VELOCITY_FORWARD)
+            self.adapt_direction()
+            self.set_robot_velocity(MOTOR_VELOCITY_FORWARD, MOTOR_VELOCITY_FORWARD)
 
             map_diff = utils.percentage_map_differences(previous_map, map_object.grid_map)
             frontier_regions, chosen_frontier, path_to_frontier = self.handle_frontier_exploration(count, map_diff, vis)
@@ -727,10 +729,10 @@ class MyRobot(Supervisor):
                     vis.draw_point(chosen_frontier[0], chosen_frontier[1], color=(255, 0, 0), radius=5)
                 
                 # Draw start and end points if found
-                if self.start_point is not None:
-                    vis.draw_point(int(self.start_point[0]), int(self.start_point[1]), color=(0, 255, 255), radius=7)
-                if self.end_point is not None:
-                    vis.draw_point(int(self.end_point[0]), int(self.end_point[1]), color=(255, 255, 0), radius=7)
+                if self.blue_estimated_pos is not None:
+                    vis.draw_point(int(self.blue_estimated_pos[0]), int(self.blue_estimated_pos[1]), color=(0, 255, 255), radius=7)
+                if self.yellow_estimated_pos is not None:
+                    vis.draw_point(int(self.yellow_estimated_pos[0]), int(self.yellow_estimated_pos[1]), color=(255, 255, 0), radius=7)
                 
                 pygame.display.flip()
 
@@ -1035,7 +1037,7 @@ class MyRobot(Supervisor):
         self.step(300)
         print('Recover from stuck')
 
-        random_duration = random.randint(100, 200)
+        random_duration = random.randint(400, 600)
         self.turn_right_milisecond(random_duration)
         print('-------Random turn')
         time.sleep(2)

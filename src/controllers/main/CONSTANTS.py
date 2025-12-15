@@ -119,7 +119,7 @@ MAPPING_PROBABILITY_FREE = 0.5              # [UNUSED] Probability threshold for
 # --- A* PATHFINDING ---
 ASTAR_INFLATION_LEVELS = [2.5, 3, 3.5, 4]   # [USED] Inflation levels for escalating A*
 ASTAR_EXPANSION_PIXELS = 3                 # [USED] Expansion around start/end points
-ASTAR_FRONTIER_INFLATION = 5              # [UNUSED] Inflation level for frontier pathfinding (hardcoded 13 in find_path_for_frontier)
+ASTAR_FRONTIER_INFLATION = 4              # [UNUSED] Inflation level for frontier pathfinding (hardcoded 13 in find_path_for_frontier)
 
 # ============================================================================
 # END HYPERPARAMETERS
