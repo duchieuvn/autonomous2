@@ -19,6 +19,7 @@ class GridMap():
         """
         self.robot = robot
         self.map_size = MAP_SIZE
+        self.resolution = RESOLUTION  # meters per pixel    
         self.log_odds = np.full((self.map_size, self.map_size), INITIAL_LOG_ODD, dtype=np.float32)
         self.grid_map = np.full((self.map_size, self.map_size), UNKNOWN, dtype=np.uint8)
         self.frontier_regions = []
@@ -44,7 +45,7 @@ class GridMap():
             # Occupied cell: last one
             x, y = points[-1]
             if 0 <= x < MAP_SIZE and 0 <= y < MAP_SIZE:
-                self.log_odds[y, x] += 0.8
+                self.log_odds[y, x] += 0.85
 
     def update_grid_map(self):
         """Update grid_map from log-odds obstacle_score_map.
@@ -60,20 +61,42 @@ class GridMap():
         # Higher score -> Higher P closer to 1
         P = 1 / (1 + np.exp(-limited_score_map))
         
+
+        # Build protection masks for cells that should not be overwritten by sensor updates
+        closed_mask = (self.grid_map == CLOSED)
+        green_protect_mask = (self.grid_map == GREEN_CARPET)
+
+        # Combine all protection masks
+        protected_mask = closed_mask | green_protect_mask 
+
         # Only update unprotected cells based on probability thresholds
-        obstacle_mask = P > 0.7
-        free_mask = P < 0.5
         unknown_mask = (self.log_odds == INITIAL_LOG_ODD)
+        obstacle_mask = (P > 0.7) & (~protected_mask)
+        free_mask = (P < 0.5) & (~protected_mask)
+
+        # 1. Update obstacles and free space
+        self.grid_map[obstacle_mask] = OBSTACLE
+        self.grid_map[free_mask] = FREESPACE
+        
+        # 2. Restore all protected cells at the end
+        self.grid_map[green_protect_mask] = GREEN_CARPET
+        # self.grid_map[closed_mask] = CLOSED
 
         # Update obstacles and free space
         self.grid_map[obstacle_mask] = OBSTACLE
         self.grid_map[free_mask] = FREESPACE
         self.grid_map[unknown_mask] = UNKNOWN
-    
+
     def lidar_update_grid_map(self, robot_pos, lidar_points):
         map_points = self.convert_to_map_coordinate_matrix(lidar_points)
         self.update_log_odds(robot_pos, map_points)
         self.update_grid_map()
+
+    def update_map_point(self, map_point, value):
+        """Update a single point in grid_map with the specified value."""
+        x, y = map_point
+        if 0 <= x < self.map_size and 0 <= y < self.map_size:
+            self.grid_map[y, x] = value
 
     def mark_closure_rect_simple(self, forward_m=0.7, back_m=-0.2, width_m=0.6, value=CLOSED):
         """Mark a simple rectangular closure directly in front of the robot on grid_map.

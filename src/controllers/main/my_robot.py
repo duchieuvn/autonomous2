@@ -40,23 +40,23 @@ class MyRobot(Supervisor):
         self.camera_detection_signal = None  # Shared variable for thread communication
         self.detection_lock = threading.Lock()  # Lock for thread synchronization
 
-    def start_detection_thread(self):
+    def start_camera_thread(self):
         """Start the continuous detection thread for red walls and columns."""
         if self.detection_thread and self.detection_thread.is_alive():
             return
         self.detection_running = True
-        self.detection_thread = threading.Thread(target=self.detection_loop, daemon=True)
+        self.detection_thread = threading.Thread(target=self.camera_thread, daemon=True)
         self.detection_thread.start()
         print("[Detection] Started continuous detection thread")
 
-    def stop_detection_thread(self):
+    def stop_camera_thread(self):
         """Stop the detection thread."""
         self.detection_running = False
         if self.detection_thread:
             self.detection_thread.join(timeout=1.0)
             print("[Detection] Stopped detection thread")
 
-    def detection_loop(self):
+    def camera_thread(self):
         """Continuous detection loop with shared variable communication."""
         while self.detection_running:
             try:
@@ -67,16 +67,12 @@ class MyRobot(Supervisor):
                         red_wall = self.there_is_red_wall()
                         if red_wall:
                             self.camera_detection_signal = 'red_wall'
-                            print("[Camera Thread] 🔴 Red wall signal set!")
                             continue
 
                         # Check for columns
                         color = self.detect_column()
-                        if color and ((color == 'blue' and not self.start_point) or (color == 'yellow' and not self.end_point)):
-                            column_distance = self.estimate_column_distance(color)
-                            if column_distance and column_distance < 80:
-                                self.camera_detection_signal = ('column', color, column_distance)
-                                print(f"[Camera Thread] 📍 {color.capitalize()} column signal set at {column_distance}cm!")
+                        if color:
+                            self.camera_detection_signal = ('column', color)
 
                 time.sleep(0.5)  # Check every 500ms
 
@@ -143,6 +139,18 @@ class MyRobot(Supervisor):
         elif type == 'deg':
             return np.degrees(angle_rad)
 
+    def position_ahead(self, distance_m):
+        """Calculate the position of a point ahead of the robot at given distance in meters."""
+
+        current_x, current_y = self.get_position()
+        heading_rad = self.get_heading('rad')
+        
+        # Calculate position ahead using heading angle
+        ahead_x = current_x + distance_m * np.cos(heading_rad)
+        ahead_y = current_y + distance_m * np.sin(heading_rad)
+        
+        return np.array([ahead_x, ahead_y])
+
     def get_angle_diff(self, map_target, type='deg'):
         heading = self.get_heading('rad')
         map_x, map_y = self.get_map_position()
@@ -162,8 +170,8 @@ class MyRobot(Supervisor):
 
     def get_map_position(self):
         x, y = self.get_position()
-        map_x = MAP_SIZE // 2 + int(x / RESOLUTION)
-        map_y = MAP_SIZE // 2 - int(np.ceil(y / RESOLUTION))
+        map_x = self.map_object.map_size // 2 + int(x / RESOLUTION)
+        map_y = self.map_object.map_size // 2 - int(np.ceil(y / RESOLUTION))
         return np.array([map_x, map_y])
 
     def get_map_distance(self, map_target):
@@ -171,13 +179,13 @@ class MyRobot(Supervisor):
         return np.linalg.norm(a - np.array(map_target))
 
     def convert_to_map_coordinates(self, x, y):
-        map_x = MAP_SIZE // 2 + int(x / RESOLUTION)
-        map_y = MAP_SIZE // 2 - int(np.ceil(y / RESOLUTION))
+        map_x = self.map_object.map_size // 2 + int(x / RESOLUTION)
+        map_y = self.map_object.map_size // 2 - int(np.ceil(y / RESOLUTION))
         return int(map_x), int(map_y)
 
     def convert_to_world_coordinates(self, map_x, map_y):
-        x = (map_x - MAP_SIZE // 2) * RESOLUTION
-        y = (MAP_SIZE // 2 - map_y) * RESOLUTION
+        x = (map_x - self.map_object.map_size // 2) * RESOLUTION
+        y = (self.map_object.map_size // 2 - map_y) * RESOLUTION
         return float(x), float(y)
     
     def obstacle_in_front(self):
@@ -337,8 +345,10 @@ class MyRobot(Supervisor):
         h_d = self.camera_depth.getHeight()
         depth_image = np.array(depth_data).reshape((h_d, w_d))
         depth_cm = depth_image * 100 # Meter -> Centimeter
-        depth_img = np.where(np.isinf(depth_cm), 9999, depth_cm)
-        depth_img = depth_img.astype(np.uint16)
+        # Replace invalid infinite depths with -1
+        depth_img = np.where(np.isinf(depth_cm), -1, depth_cm)
+        # Use signed dtype to allow -1 sentinel
+        depth_img = depth_img.astype(np.int16)
         return depth_img
     
     def there_is_red_wall(self):
@@ -461,35 +471,39 @@ class MyRobot(Supervisor):
 
 
     def estimate_column_distance(self, color):
+        """Estimate horizontal distance to detected column using depth and known height."""
         self.stop_motor()
+        
+        # Get sensor data
         depth_img = self.get_camera_depth_cm()
-        if depth_img is None:
-            print("[Error] Failed to get depth image.")
-            return None
-        
         hsv_img = self.get_hsv_image()
-        if hsv_img is None:
-            print("[Error] Failed to get hsv image.")
+        
+        if depth_img is None or hsv_img is None:
+            print(f"[Error] Failed to get sensor data for {color} column detection.")
             return None
         
+        # Segment column in image
         column_mask = utils.segment_color(hsv_img, color)
-        # Ensure the mask is boolean
-        column_mask_bool = column_mask != 0
-
-        # Check if any part of the column is detected
-        if not np.any(column_mask_bool):
-            print(f"[Info] No {color} column detected to estimate distance.")
+        if not np.any(column_mask):
             return None
-
-        # Get depth values corresponding to the column mask
-        depth_values = depth_img[column_mask_bool]
-
-        # Calculate the median distance to be robust against outliers
-        median_distance_cm = np.median(depth_values)
-        if median_distance_cm > 999:
-            median_distance_cm = 1 
-
-        return median_distance_cm
+        
+        # Extract valid depth values (filter out -1 sentinel)
+        depth_values = depth_img[column_mask != 0]
+        valid_depths = depth_values[depth_values > 0]
+        
+        if len(valid_depths) == 0:
+            return None
+        
+        # Calculate horizontal distance using Pythagorean theorem
+        max_depth_cm = float(np.max(valid_depths))
+        column_height_cm = 125.0
+        
+        if max_depth_cm <= column_height_cm:
+            print(f"[Info] Object closer than column height ({max_depth_cm:.1f} cm).")
+            return None
+        
+        horizontal_distance_cm = np.sqrt(max_depth_cm ** 2 - column_height_cm ** 2)
+        return horizontal_distance_cm 
 
     def align_to_column(self, color):
         print("Aligning to column...")
@@ -536,13 +550,18 @@ class MyRobot(Supervisor):
         map_position = self.get_map_position()
         self.map_object.lidar_update_grid_map(map_position, points)
 
+    def all_columns_not_found(self):
+        if (self.start_point is None) or (self.end_point is None):
+            return True
+        return False
+
     def handle_frontier_exploration(self, count, map_diff, vis):
         frontier_regions = []
         chosen_frontier = None
         path_to_frontier = None
 
         if count >= EXPLORATION_START_FRONTIER_AFTER and count % EXPLORATION_FRONTIER_SELECTION_FREQ == 0 \
-            and not (self.end_point and self.start_point):
+            and self.all_columns_not_found():
             frontier_regions = self.map_object.detect_frontiers()
 
             if map_diff > 0.005 or self.chosen_frontier_count < EXPLORATION_MAP_UPDATE_FREQ:
@@ -560,6 +579,18 @@ class MyRobot(Supervisor):
                     # self.path_following_pipeline(path_to_frontier, vis if debug else None)
 
         return frontier_regions, chosen_frontier, path_to_frontier
+    
+    def update_column_position(self, color, position):
+        if color == 'blue':
+            if self.start_point is None:
+                self.start_point = position
+            else:    
+                self.start_point = 0.3 * np.array(self.start_point) + 0.7 * np.array(position)  
+        if color == 'yellow':
+            if self.end_point is None:
+                self.end_point = position
+            else:
+                self.end_point = 0.3 * np.array(self.end_point) + 0.7 * np.array(position)
 
     def explore(self, debug=True):
         '''
@@ -569,7 +600,7 @@ class MyRobot(Supervisor):
         '''
 
         # Start continuous detection thread before any setup
-        self.start_detection_thread()
+        self.start_camera_thread()
 
         map_object = self.map_object
         vis = None
@@ -597,20 +628,27 @@ class MyRobot(Supervisor):
                 if self.camera_detection_signal is not None:
                     signal = self.camera_detection_signal
                     self.camera_detection_signal = None  # Reset signal to allow camera thread to set new ones
-                    print(f"[Main Thread] Processing signal: {signal}")
 
                     if signal == 'red_wall':
-                        print('[Main Thread] 🔴 Handling red wall detection!')
                         self.align_to_red_wall()
                         # print('Done align to red wall')
                         random_duration = random.randint(700, 900)
                         self.turn_right_milisecond(random_duration)
                         print('----random turn after red wall done----')
-                        time.sleep(2)
 
-                    elif isinstance(signal, tuple) and signal[0] == 'column':
-                        _, color, column_distance = signal
-                        print(f"[Main Thread] 📍 Handling {color} column detection at {column_distance}cm!")
+                    elif signal[0] == 'column':
+                        _, color = signal
+                        column_distance = self.estimate_column_distance(color) 
+                        if column_distance is not None:
+                            column_position = self.position_ahead(column_distance / 100) 
+                            column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
+                            self.update_column_position(color, column_map_position)
+                            
+                            if color == 'blue':
+                                map_object.update_map_point(column_map_position, value=BLUE_COLUMN) 
+                            elif color == 'yellow':
+                                map_object.update_map_point(column_map_position, value=YELLOW_COLUMN)
+                            
                         # self.align_to_column(color)
                         # self.mark_on_map(column_distance, color)
 
@@ -624,8 +662,8 @@ class MyRobot(Supervisor):
 
             # --- Random exploration movement ---
             # if map_diff > 0.02:
-            self.adapt_direction()
-            self.set_robot_velocity(MOTOR_VELOCITY_FORWARD, MOTOR_VELOCITY_FORWARD)
+            # self.adapt_direction()
+            # self.set_robot_velocity(MOTOR_VELOCITY_FORWARD, MOTOR_VELOCITY_FORWARD)
 
             map_diff = utils.percentage_map_differences(previous_map, map_object.grid_map)
             frontier_regions, chosen_frontier, path_to_frontier = self.handle_frontier_exploration(count, map_diff, vis)
@@ -686,12 +724,19 @@ class MyRobot(Supervisor):
                 vis.draw_point(rx, ry, color=(0, 0, 255), radius=5)
                 if chosen_frontier:
                     vis.draw_point(chosen_frontier[0], chosen_frontier[1], color=(255, 0, 0), radius=5)
+                
+                # Draw start and end points if found
+                if self.start_point is not None:
+                    vis.draw_point(int(self.start_point[0]), int(self.start_point[1]), color=(0, 255, 255), radius=7)
+                if self.end_point is not None:
+                    vis.draw_point(int(self.end_point[0]), int(self.end_point[1]), color=(255, 255, 0), radius=7)
+                
                 pygame.display.flip()
 
             count += 1
 
         # Clean up detection thread
-        self.stop_detection_thread()
+        self.stop_camera_thread()
         self.stop_motor()
         return self.path
 
@@ -790,7 +835,7 @@ class MyRobot(Supervisor):
     def frontier_following(self, path, vis=None):
         stuck_counter = 0
         for target in path[5::5]:
-            while self.step() != -1:
+            while self.step() != -1 and self.camera_detection_signal is None:
                 last_position = self.get_position()
                 for event in pygame.event.get(): 
                     if event.type == pygame.QUIT:
@@ -961,18 +1006,18 @@ class MyRobot(Supervisor):
         return points_world
 
     def detect_column(self):
-        cropped_frame = self.get_bottom_half_hsv()
-        if cropped_frame is None:
+        camera_frame = self.get_hsv_image()
+        if camera_frame is None:
             return None
 
-        yellow_mask = utils.segment_color(cropped_frame, 'yellow')
+        yellow_mask = utils.segment_color(camera_frame, 'yellow')
         if cv2.countNonZero(yellow_mask):
-            print("Detected YELLOW column")
+            print("YELLOW")
             return 'yellow'
 
-        blue_mask = utils.segment_color(cropped_frame, 'blue')
+        blue_mask = utils.segment_color(camera_frame, 'blue')
         if cv2.countNonZero(blue_mask):
-            print("Detected BLUE column")
+            print("BLUE")
             return 'blue'
 
         return None
@@ -987,17 +1032,16 @@ class MyRobot(Supervisor):
     def recover_from_stuck(self):
         self.set_robot_velocity(-8, -8)
         self.step(300)
-        print('Stuck -> Moved back')
+        print('Recover from stuck')
 
-        if self.last_turn == 'right':
-            self.set_robot_velocity(8, -8)
-        else:
-            self.set_robot_velocity(-8, 8)
-        self.step(100)
-        distances = self.get_distances()
-        while min(distances[0], distances[2]) < 0.05:
-            self.step(20)
-            distances = self.get_distances()
+        random_duration = random.randint(700, 900)
+        self.turn_right_milisecond(random_duration)
+        
+        # while min(distances[0], distances[2]) < 0.05:
+        #     print('Still closed to obstacle')
+        #     self.step(20)
+        #     time.sleep(2)
+        #     distances = self.get_distances()
 
     def plan_and_follow_frontier(self, top_k=3):
         """Select a frontier target, plan a path, and follow it using GridMap manager."""
