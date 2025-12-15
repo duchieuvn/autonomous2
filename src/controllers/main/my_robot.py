@@ -197,10 +197,12 @@ class MyRobot(Supervisor):
     def turn_right_milisecond(self, s=200):  
         self.set_robot_velocity(8, -8)
         self.step(s)
+        self.stop_motor()
 
     def turn_left_milisecond(self, s=200):
         self.set_robot_velocity(-8, 8)
         self.step(s)
+        self.stop_motor()
 
     def adapt_direction(self):
         count = 0
@@ -499,7 +501,6 @@ class MyRobot(Supervisor):
         column_height_cm = 125.0
         
         if max_depth_cm <= column_height_cm:
-            print(f"[Info] Object closer than column height ({max_depth_cm:.1f} cm).")
             return None
         
         horizontal_distance_cm = np.sqrt(max_depth_cm ** 2 - column_height_cm ** 2)
@@ -1034,9 +1035,10 @@ class MyRobot(Supervisor):
         self.step(300)
         print('Recover from stuck')
 
-        random_duration = random.randint(700, 900)
+        random_duration = random.randint(100, 200)
         self.turn_right_milisecond(random_duration)
-        
+        print('-------Random turn')
+        time.sleep(2)
         # while min(distances[0], distances[2]) < 0.05:
         #     print('Still closed to obstacle')
         #     self.step(20)
