@@ -26,8 +26,8 @@ class MyRobot(Supervisor):
         self.last_turn = 'right'
         self.start_point = None
         self.end_point = None
-        self.blue_estimated_pos = np.array([0,0])
-        self.yellow_estimated_pos = np.array([0,0])
+        self.blue_estimated_pos = None
+        self.yellow_estimated_pos = None
         self.path = []
         self.chosen_frontier_count = 0
         # closure marking cooldown to avoid repeated marks when seeing same wall
@@ -38,30 +38,58 @@ class MyRobot(Supervisor):
         self.is_currently_turning = False
         # Multi-threading for continuous detection monitoring
         self.detection_thread = None
-        self.detection_running = False
+        self.camera_thread_running = False
         self.camera_detection_signal = None  # Shared variable for thread communication
         self.detection_lock = threading.Lock()  # Lock for thread synchronization
+        # Multi-threading for lidar mapping
+        self.lidar_thread = None
+        self.lidar_thread_running = False
+        self.lidar_lock = threading.Lock()  # Lock for thread synchronization
 
     def start_camera_thread(self):
         """Start the continuous detection thread for red walls and columns."""
         if self.detection_thread and self.detection_thread.is_alive():
             return
-        self.detection_running = True
-        self.detection_thread = threading.Thread(target=self.camera_thread, daemon=True)
+        self.camera_thread_running = True
+        self.detection_thread = threading.Thread(target=self.camera_detection_loop, daemon=True)
         self.detection_thread.start()
         print("[Detection] Started continuous detection thread")
 
     def stop_camera_thread(self):
         """Stop the detection thread."""
-        self.detection_running = False
+        self.camera_thread_running = False
         if self.detection_thread:
             self.detection_thread.join(timeout=1.0)
             print("[Detection] Stopped detection thread")
 
-    def camera_thread(self):
+    def start_lidar_thread(self):
+        """Start the continuous lidar mapping thread."""
+        if self.lidar_thread and self.lidar_thread.is_alive():
+            return
+        self.lidar_thread_running = True
+        self.lidar_thread = threading.Thread(target=self.lidar_update_loop, daemon=True)
+        self.lidar_thread.start()
+        print("[Lidar] Started continuous lidar mapping thread")
+
+    def stop_lidar_thread(self):
+        """Stop the lidar mapping thread."""
+        self.lidar_thread_running = False
+        if self.lidar_thread:
+            self.lidar_thread.join(timeout=1.0)
+            print("[Lidar] Stopped lidar mapping thread")
+
+    def camera_detection_loop(self):
         """Continuous detection loop with shared variable communication."""
-        while self.detection_running:
+        # Wait for sensors to initialize
+        time.sleep(1.0)
+        
+        while self.camera_thread_running:
             try:
+                # Check if camera is ready
+                if self.camera_rgb is None:
+                    time.sleep(0.5)
+                    continue
+                    
                 # Only write to shared variable if it's None (main thread has processed previous signal)
                 with self.detection_lock:
                     if self.camera_detection_signal is None:
@@ -82,11 +110,39 @@ class MyRobot(Supervisor):
                 print(f"[Detection] Error in detection loop: {e}")
                 time.sleep(1.0)
 
+    def lidar_update_loop(self):
+        """Continuous lidar mapping loop."""
+        # Wait for sensors to initialize
+        time.sleep(1.0)
+        
+        while self.lidar_thread_running:
+            print("lidar thread running...--------")
+            try:
+                # Check if lidar is ready
+                if self.lidar is None:
+                    time.sleep(0.5)
+                    continue
+                    
+                # Only update map when robot is not turning
+                if not self.is_turning():
+                    with self.lidar_lock:
+                        self.stop_motor()
+                        self.step(self.time_step)
+                        time.sleep(0.1)  # Allow robot to stabilize
+                        self.lidar_update_map()
+                        print("Thread [Lidar] Updated map")
+                time.sleep(1)  # Update at same frequency as before
+
+            except Exception as e:
+                print(f"[Lidar] Error in lidar update loop: {e}")
+                time.sleep(1.0)
+
     def is_turning(self):
         # Check if the robot is turning, with 10-step cooldown after turning stops
         left_speed = self.motors['fl'].getVelocity()
         right_speed = self.motors['fr'].getVelocity()
-        turning_now = abs(left_speed - right_speed) > 0.01
+        turning_now = abs(left_speed - right_speed) > 0.08
+        return turning_now
         
         if turning_now:
             # Currently turning
@@ -98,7 +154,7 @@ class MyRobot(Supervisor):
             if self.is_currently_turning:
                 # Turning just stopped, start cooldown
                 self.steps_since_turning += 1
-                if self.steps_since_turning < 10:
+                if self.steps_since_turning < 3:
                     return True  # Still in cooldown period
                 else:
                     # Cooldown complete
@@ -320,6 +376,9 @@ class MyRobot(Supervisor):
         return float(np.min(distances))
 
     def get_hsv_image(self):
+        if self.camera_rgb is None:
+            return None
+            
         image_data = self.camera_rgb.getImage()
         if image_data is None:
             return None
@@ -341,6 +400,9 @@ class MyRobot(Supervisor):
         return bottom_half
     
     def get_camera_depth_cm(self):
+        if self.camera_depth is None:
+            return None
+            
         depth_data = self.camera_depth.getRangeImage()
         if depth_data == None:
             return None
@@ -602,8 +664,9 @@ class MyRobot(Supervisor):
         3. Explore randomly, occasionally follow frontier targets
         '''
 
-        # Start continuous detection thread before any setup
+        # Start continuous detection and lidar threads before any setup
         self.start_camera_thread()
+        self.start_lidar_thread()
 
         map_object = self.map_object
         vis = None
@@ -617,6 +680,7 @@ class MyRobot(Supervisor):
         previous_map = map_object.grid_map.copy()
         map_diff = 1.0
         frontier_regions = []
+        last_position = self.get_position()
 
         while self.step(self.time_step) != -1 and len(self.path) == 0:
             if debug:
@@ -655,18 +719,22 @@ class MyRobot(Supervisor):
                         # self.align_to_column(color)
                         # self.mark_on_map(column_distance, color)
 
-            # Mapping - update less frequently to avoid drag/smearing artifacts
-            if count % EXPLORATION_MAP_UPDATE_FREQ == 0 and not self.is_turning():
-                self.stop_motor()
-                self.lidar_update_map()
-                inflated_map = utils.inflate_obstacles(map_object.grid_map, inflation_pixels=ASTAR_FRONTIER_INFLATION)  # 0/1
-                bw = (inflated_map * 255).astype(np.uint8)
-                cv2.imwrite("../../inflated_map.png", bw)  # or .bmp
+            # # Mapping - now handled by lidar thread, just save inflated map periodically
+            # if count % EXPLORATION_MAP_UPDATE_FREQ == 0:
+            #     with self.lidar_lock:
+            #         inflated_map = utils.inflate_obstacles(map_object.grid_map, inflation_pixels=ASTAR_FRONTIER_INFLATION)  # 0/1
+            #         bw = (inflated_map * 255).astype(np.uint8)
+            #         cv2.imwrite("../../inflated_map.png", bw)  # or .bmp
 
             # --- Random exploration movement ---
             # if map_diff > 0.02:
             self.adapt_direction()
             self.set_robot_velocity(MOTOR_VELOCITY_FORWARD, MOTOR_VELOCITY_FORWARD)
+            
+            if count % 30 == 0:
+                if self.robot_stuck(last_position):
+                    self.recover_from_stuck()
+                last_position = self.get_position()
 
             map_diff = utils.percentage_map_differences(previous_map, map_object.grid_map)
             frontier_regions, chosen_frontier, path_to_frontier = self.handle_frontier_exploration(count, map_diff, vis)
@@ -738,8 +806,9 @@ class MyRobot(Supervisor):
 
             count += 1
 
-        # Clean up detection thread
+        # Clean up detection and lidar threads
         self.stop_camera_thread()
+        self.stop_lidar_thread()
         self.stop_motor()
         return self.path
 
@@ -863,7 +932,7 @@ class MyRobot(Supervisor):
                     if stuck_counter > 50:
                         print("Stuck in frontier_following, drop path...")
                         self.stop_motor()
-                        self.lidar_update_map()
+                        # self.lidar_update_map()
                         self.recover_from_stuck()
                         
                         return
@@ -968,7 +1037,13 @@ class MyRobot(Supervisor):
         return False
 
     def get_pointcloud_2d(self):
+        if self.lidar is None:
+            return np.array([])
+        
         points = self.lidar.getPointCloud()
+        if points is None or len(points) == 0:
+            return np.array([])
+            
         points = np.array([[point.x, point.y] for point in points])
         points = points[~np.isinf(points).any(axis=1)]
         return points
@@ -1040,7 +1115,6 @@ class MyRobot(Supervisor):
         random_duration = random.randint(400, 600)
         self.turn_right_milisecond(random_duration)
         print('-------Random turn')
-        time.sleep(2)
         # while min(distances[0], distances[2]) < 0.05:
         #     print('Still closed to obstacle')
         #     self.step(20)
