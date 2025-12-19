@@ -277,7 +277,6 @@ def runAStarSearch(global_map, start_coords, goal_coords):
         current = frontier.pop()
 
     if current is None:
-        print("Visited cells:", frontier.visited_count)
         print("No path found")
         return []
 
