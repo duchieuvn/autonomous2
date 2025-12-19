@@ -6,7 +6,7 @@ MAP_SIZE = 300 # 10m x 10m grid map
 # 300 pixels = 10m, so each pixel is 0.0333m = 3.33cm
 RESOLUTION = 10.0 / MAP_SIZE
 
-INITIAL_LOG_ODD = 0
+INITIAL_LOG_ODD = 0.5
 OBSTACLE = 1
 FREESPACE = 0
 UNKNOWN = 255
@@ -90,7 +90,7 @@ CLOSURE_MARK_WIDTH = 0.6                    # [USED] Width (meters) of closure r
 CLOSURE_MARK_IOU_THRESHOLD = 0.4            # [UNUSED] IoU threshold to skip re-marking same closure (hardcoded 0.4 in mark_closure_rect_simple)
 
 # --- COLOR DETECTION ---
-COLOR_DETECTION_DEPTH_THRESHOLD = 80        # [USED] Depth threshold (cm) for column detection
+COLUMN_DETECTION_DEPTH_THRESHOLD = 65        # [USED] Depth threshold (cm) for column detection
 COLOR_DETECTION_RED_PIXEL_RATIO = 0.25      # [USED] Pixel ratio threshold for red wall detection
 RED_WALL_HSV_LOWER1 = [0, 120, 70]    # [USED] Red color lower bound 1 (HSV)
 RED_WALL_HSV_UPPER1 = [10, 255, 255]  # [USED] Red color upper bound 1 (HSV)

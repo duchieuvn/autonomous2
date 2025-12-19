@@ -26,8 +26,7 @@ class MyRobot(Supervisor):
         self.last_turn = 'right'
         self.start_point = None
         self.end_point = None
-        self.blue_estimated_pos = None
-        self.yellow_estimated_pos = None
+        self.column_pos_estimation = {'blue': None, 'yellow': None}
         self.path = []
         self.chosen_frontier_count = 0
         # closure marking cooldown to avoid repeated marks when seeing same wall
@@ -101,7 +100,21 @@ class MyRobot(Supervisor):
 
                         # Check for columns
                         color = self.detect_column()
-                        if color:
+                        # if color:
+                            # self.center_column_in_view(color)
+                            # time.sleep(0.2)  
+                            # column_distance_cm = self.estimate_column_distance(color) 
+                            # if column_distance_cm is not None:
+                            #     column_position = self.position_ahead(column_distance_cm / 100) 
+                            #     column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
+                            #     print("Distance column", column_distance_cm)
+                            #     self.update_column_estimation(color, column_map_position)
+                                
+                            #     if color == 'blue':
+                            #         self.map_object.update_map_point(column_map_position, value=BLUE_COLUMN) 
+                            #     elif color == 'yellow':
+                            #         self.map_object.update_map_point(column_map_position, value=YELLOW_COLUMN)
+                        if (color == 'blue' and self.start_point is None) or (color == 'yellow' and self.end_point is None): 
                             self.camera_detection_signal = ('column', color)
 
                 time.sleep(0.5)  # Check every 500ms
@@ -116,7 +129,6 @@ class MyRobot(Supervisor):
         time.sleep(1.0)
         
         while self.lidar_thread_running:
-            print("lidar thread running...--------")
             try:
                 # Check if lidar is ready
                 if self.lidar is None:
@@ -130,7 +142,6 @@ class MyRobot(Supervisor):
                         self.step(self.time_step)
                         time.sleep(0.1)  # Allow robot to stabilize
                         self.lidar_update_map()
-                        print("Thread [Lidar] Updated map")
                 time.sleep(1)  # Update at same frequency as before
 
             except Exception as e:
@@ -456,22 +467,11 @@ class MyRobot(Supervisor):
 
         self.stop_motor()
 
-    def mark_on_map(self, distance_cm, color='blue'):
-        # Use provided distance if available; otherwise attempt to estimate.
-        if distance_cm is None:
-            distance_cm = self.estimate_column_distance(color)
-
-        # If we still couldn't estimate the distance, skip marking.
-        if distance_cm is None:
-            print(f"[info] No {color} column distance available; skipping mark_on_map")
-            return
-
-        if distance_cm < COLOR_DETECTION_DEPTH_THRESHOLD:
-            print(f"column {color} pinned at distance {distance_cm} cm")
-            if color == 'blue':
-                self.start_point = tuple(self.get_map_position()) # Blue
-            elif color == 'yellow':
-                self.end_point = tuple(self.get_map_position())  # Yellow
+    def mark_on_map(self, color='blue'):
+        if color == 'blue':
+            self.start_point = tuple(self.get_map_position()) # Blue
+        elif color == 'yellow':
+            self.end_point = tuple(self.get_map_position())  # Yellow
 
     def align_to_red_wall(self):
         print("Aligning to red wall by moving backward...")
@@ -518,6 +518,7 @@ class MyRobot(Supervisor):
                 self.stop_motor()
                 break
 
+    def mark_closure_block(self):
         # After aligning/stopping, mark the corridor/gap in front as closed
         now = time.time()
         if now - getattr(self, 'last_closure_time', 0.0) >= getattr(self, 'closure_cooldown', 5.0):
@@ -609,6 +610,49 @@ class MyRobot(Supervisor):
             else: # No red detected
                 self.stop_motor()
                 break
+    
+    def center_column_in_view(self, color):
+
+        # PD controller constants
+        Kp = ALIGN_COLUMN_KP
+        Kd = ALIGN_COLUMN_KD
+
+        error_threshold = ALIGN_COLUMN_ERROR_THRESHOLD
+        last_error = 0
+        align_step_count = 0
+
+        while self.step(self.time_step) != -1:
+            align_step_count += 1
+            if align_step_count > 100:
+                print("Centering timeout reached.")
+                self.stop_motor()
+                break
+
+            hsv_img = self.get_hsv_image()
+            if hsv_img is None:
+                self.stop_motor()
+                break
+
+            height, width, _ = hsv_img.shape
+            column_mask = utils.segment_color(hsv_img, color)
+            M = cv2.moments(column_mask)
+            if M["m00"] > 0:
+                cX = int(M["m10"] / M["m00"])
+                error = cX - (width // 2)
+
+                # Check for completion
+                if abs(error) < error_threshold:
+                    self.stop_motor()
+                    break
+
+                # PD control for turning
+                turn_speed = Kp * error + Kd * (error - last_error)
+                last_error = error
+                self.set_robot_velocity(turn_speed, -turn_speed)
+                self.step(self.time_step)
+            else:  # No column detected
+                self.stop_motor()
+                break
 
     def lidar_update_map(self):
         points = self.get_pointcloud_world_coordinates()
@@ -625,11 +669,18 @@ class MyRobot(Supervisor):
         chosen_frontier = None
         path_to_frontier = None
 
+        # Use the blue-estimated position only occasionally to avoid spamming the same guess
+        if self.column_pos_estimation['blue'] is not None and (count % 20 == 0):
+            chosen_frontier = (
+                int(self.column_pos_estimation['blue'][0] + random.randint(-10, 10)),
+                int(self.column_pos_estimation['blue'][1] + random.randint(-10, 10))
+            )
+
         if count >= EXPLORATION_START_FRONTIER_AFTER and count % EXPLORATION_FRONTIER_SELECTION_FREQ == 0 \
             and self.all_columns_not_found():
             frontier_regions = self.map_object.detect_frontiers()
 
-            if map_diff > 0.005 or self.chosen_frontier_count < EXPLORATION_MAP_UPDATE_FREQ:
+            if map_diff > 0.008 or self.chosen_frontier_count < EXPLORATION_MAP_UPDATE_FREQ:
                 chosen_frontier = self.select_frontier_target(frontier_regions)
                 self.chosen_frontier_count += 1
             else:
@@ -637,25 +688,28 @@ class MyRobot(Supervisor):
                 chosen_frontier = self.select_frontier_target2(frontier_regions)
                 self.chosen_frontier_count = 0
 
-            if chosen_frontier:
-                path_to_frontier = self.map_object.find_path_for_frontier(self.get_map_position(), chosen_frontier)
-                if path_to_frontier:
-                    self.frontier_following(path_to_frontier, vis)
-                    # self.path_following_pipeline(path_to_frontier, vis if debug else None)
+        if chosen_frontier:
+            path_to_frontier = self.map_object.find_path_for_frontier(self.get_map_position(), chosen_frontier)
+            if path_to_frontier:
+                self.frontier_following(path_to_frontier, vis)
+                # self.path_following_pipeline(path_to_frontier, vis if debug else None)
 
         return frontier_regions, chosen_frontier, path_to_frontier
     
+    def update_column_estimation(self, color, position):
+        if self.column_pos_estimation[color] is None:
+            self.column_pos_estimation[color] = position
+        elif self.start_point is None:    
+            self.column_pos_estimation[color] = 0.3 * np.array(self.column_pos_estimation[color]) + 0.7 * np.array(position)  
+    
     def update_column_position(self, color, position):
         if color == 'blue':
-            if self.blue_estimated_pos is None:
-                self.blue_estimated_pos = position
-            else:    
-                self.blue_estimated_pos = 0.3 * np.array(self.blue_estimated_pos) + 0.7 * np.array(position)  
+            if self.start_point is None:
+                self.start_point = position
         if color == 'yellow':
-            if self.yellow_estimated_pos is None:
-                self.yellow_estimated_pos = position
-            else:
-                self.yellow_estimated_pos = 0.3 * np.array(self.yellow_estimated_pos) + 0.7 * np.array(position)
+            if self.end_point is None:
+                self.end_point = position
+
 
     def explore(self, debug=True):
         '''
@@ -688,8 +742,6 @@ class MyRobot(Supervisor):
                     if event.type == pygame.QUIT:
                         exit()
 
-
-
             # Check for camera detection signals from background thread
             with self.detection_lock:
                 if self.camera_detection_signal is not None:
@@ -697,34 +749,32 @@ class MyRobot(Supervisor):
                     self.camera_detection_signal = None  # Reset signal to allow camera thread to set new ones
 
                     if signal == 'red_wall':
+                        self.stop_motor()
+                        self.mark_closure_block()
                         self.align_to_red_wall()
                         # print('Done align to red wall')
                         random_duration = random.randint(700, 900)
                         self.turn_right_milisecond(random_duration)
-                        print('----random turn after red wall done----')
 
                     elif signal[0] == 'column':
                         _, color = signal
+                        self.center_column_in_view(color)
                         column_distance = self.estimate_column_distance(color) 
                         if column_distance is not None:
                             column_position = self.position_ahead(column_distance / 100) 
                             column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
-                            self.update_column_position(color, column_map_position)
+                            # self.update_column_position(color, column_map_position)
                             
+
                             if color == 'blue':
+                                print(f"Blue column detected at {column_distance} cm")
+                                self.start_point = column_map_position
                                 map_object.update_map_point(column_map_position, value=BLUE_COLUMN) 
                             elif color == 'yellow':
+                                print(f"Yellow column detected at {column_distance} cm")
+                                self.end_point = column_map_position
                                 map_object.update_map_point(column_map_position, value=YELLOW_COLUMN)
                             
-                        # self.align_to_column(color)
-                        # self.mark_on_map(column_distance, color)
-
-            # # Mapping - now handled by lidar thread, just save inflated map periodically
-            # if count % EXPLORATION_MAP_UPDATE_FREQ == 0:
-            #     with self.lidar_lock:
-            #         inflated_map = utils.inflate_obstacles(map_object.grid_map, inflation_pixels=ASTAR_FRONTIER_INFLATION)  # 0/1
-            #         bw = (inflated_map * 255).astype(np.uint8)
-            #         cv2.imwrite("../../inflated_map.png", bw)  # or .bmp
 
             # --- Random exploration movement ---
             # if map_diff > 0.02:
@@ -797,11 +847,17 @@ class MyRobot(Supervisor):
                     vis.draw_point(chosen_frontier[0], chosen_frontier[1], color=(255, 0, 0), radius=5)
                 
                 # Draw start and end points if found
-                if self.blue_estimated_pos is not None:
-                    vis.draw_point(int(self.blue_estimated_pos[0]), int(self.blue_estimated_pos[1]), color=(0, 255, 255), radius=7)
-                if self.yellow_estimated_pos is not None:
-                    vis.draw_point(int(self.yellow_estimated_pos[0]), int(self.yellow_estimated_pos[1]), color=(255, 255, 0), radius=7)
-                
+                if self.start_point is None:
+                    if self.column_pos_estimation['blue'] is not None:
+                        vis.draw_point(int(self.column_pos_estimation['blue'][0]), int(self.column_pos_estimation['blue'][1]), color=(0, 255, 255), radius=7)
+                else:
+                    vis.draw_point(self.start_point[0], self.start_point[1], color=(0, 0, 255), radius=7)
+                if self.end_point is None:
+                    if self.column_pos_estimation['yellow'] is not None:
+                        vis.draw_point(int(self.column_pos_estimation['yellow'][0]), int(self.column_pos_estimation['yellow'][1]), color=(255, 255, 0), radius=7)
+                else:
+                    vis.draw_point(self.end_point[0], self.end_point[1], color=(255, 255, 0), radius=7)
+
                 pygame.display.flip()
 
             count += 1
@@ -932,7 +988,6 @@ class MyRobot(Supervisor):
                     if stuck_counter > 50:
                         print("Stuck in frontier_following, drop path...")
                         self.stop_motor()
-                        # self.lidar_update_map()
                         self.recover_from_stuck()
                         
                         return
@@ -1110,11 +1165,9 @@ class MyRobot(Supervisor):
     def recover_from_stuck(self):
         self.set_robot_velocity(-8, -8)
         self.step(300)
-        print('Recover from stuck')
 
         random_duration = random.randint(400, 600)
         self.turn_right_milisecond(random_duration)
-        print('-------Random turn')
         # while min(distances[0], distances[2]) < 0.05:
         #     print('Still closed to obstacle')
         #     self.step(20)
