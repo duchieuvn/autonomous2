@@ -28,6 +28,8 @@ class MyRobot(Supervisor):
         self.end_point = None
         self.blue_estimated_pos = None
         self.yellow_estimated_pos = None
+        self.blue_pos_update_count = 0  # Track how many times blue column has been updated
+        self.yellow_pos_update_count = 0  # Track how many times yellow column has been updated
         self.path = []
         self.chosen_frontier_count = 0
         # closure marking cooldown to avoid repeated marks when seeing same wall
@@ -102,8 +104,24 @@ class MyRobot(Supervisor):
                         # Check for columns
                         color = self.detect_column()
                         if color:
-                            self.camera_detection_signal = ('column', color)
-
+                            # Gate: only execute this block max 3 times per color
+                            update_count = self.blue_pos_update_count if color == 'blue' else self.yellow_pos_update_count
+                            if update_count < 3:
+                                self.camera_detection_signal = ('column', color)
+                                self.center_column_in_view(color)
+                                column_distance = self.estimate_column_distance(color) 
+                                if column_distance is not None:
+                                    column_position = self.position_ahead(column_distance / 100) 
+                                    column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
+                                    self.update_column_position(color, column_map_position)
+                                    
+                                    if color == 'blue':
+                                        self.map_object.update_map_point(column_map_position, value=BLUE_COLUMN)
+                                        self.blue_pos_update_count += 1
+                                    elif color == 'yellow':
+                                        self.map_object.update_map_point(column_map_position, value=YELLOW_COLUMN)
+                                        self.yellow_pos_update_count += 1
+                                
                 time.sleep(0.5)  # Check every 500ms
 
             except Exception as e:
@@ -130,8 +148,7 @@ class MyRobot(Supervisor):
                         self.step(self.time_step)
                         time.sleep(0.1)  # Allow robot to stabilize
                         self.lidar_update_map()
-                        print("Thread [Lidar] Updated map")
-                time.sleep(1)  # Update at same frequency as before
+                time.sleep(0.5)  # Update at same frequency as before
 
             except Exception as e:
                 print(f"[Lidar] Error in lidar update loop: {e}")
@@ -518,6 +535,7 @@ class MyRobot(Supervisor):
                 self.stop_motor()
                 break
 
+    def mark_closure_block(self):
         # After aligning/stopping, mark the corridor/gap in front as closed
         now = time.time()
         if now - getattr(self, 'last_closure_time', 0.0) >= getattr(self, 'closure_cooldown', 5.0):
@@ -610,6 +628,50 @@ class MyRobot(Supervisor):
                 self.stop_motor()
                 break
 
+    def center_column_in_view(self, color):
+
+        # PD controller constants
+        Kp = ALIGN_COLUMN_KP
+        Kd = ALIGN_COLUMN_KD
+
+        error_threshold = ALIGN_COLUMN_ERROR_THRESHOLD
+        last_error = 0
+        align_step_count = 0
+
+        while self.step(self.time_step) != -1:
+            align_step_count += 1
+            if align_step_count > 100:
+                print("Centering timeout reached.")
+                self.stop_motor()
+                break
+
+            hsv_img = self.get_hsv_image()
+            if hsv_img is None:
+                self.stop_motor()
+                break
+
+            height, width, _ = hsv_img.shape
+            column_mask = utils.segment_color(hsv_img, color)
+            M = cv2.moments(column_mask)
+            if M["m00"] > 0:
+                cX = int(M["m10"] / M["m00"])
+                error = cX - (width // 2)
+
+                # Check for completion
+                if abs(error) < error_threshold:
+                    self.stop_motor()
+                    break
+
+                # PD control for turning
+                turn_speed = Kp * error + Kd * (error - last_error)
+                last_error = error
+                self.set_robot_velocity(turn_speed, -turn_speed)
+                self.step(self.time_step)
+            else:  # No column detected
+                self.stop_motor()
+                break
+
+
     def lidar_update_map(self):
         points = self.get_pointcloud_world_coordinates()
         map_position = self.get_map_position()
@@ -629,13 +691,19 @@ class MyRobot(Supervisor):
             and self.all_columns_not_found():
             frontier_regions = self.map_object.detect_frontiers()
 
-            if map_diff > 0.005 or self.chosen_frontier_count < EXPLORATION_MAP_UPDATE_FREQ:
-                chosen_frontier = self.select_frontier_target(frontier_regions)
-                self.chosen_frontier_count += 1
-            else:
-                print("Map is not explored enough, select different frontier region")
-                chosen_frontier = self.select_frontier_target2(frontier_regions)
-                self.chosen_frontier_count = 0
+            # Occasionally bias frontier choice near known column estimates/start/end
+            if count % 100 == 0 and random.random() < 0.6:
+                chosen_frontier = self.select_frontier_near_known_points(frontier_regions)
+
+            # Fallback to existing selection logic if none chosen
+            if chosen_frontier is None:
+                if map_diff > 0.005 or self.chosen_frontier_count < EXPLORATION_MAP_UPDATE_FREQ:
+                    chosen_frontier = self.select_frontier_target(frontier_regions)
+                    self.chosen_frontier_count += 1
+                else:
+                    print("Map is not explored enough, select different frontier region")
+                    chosen_frontier = self.select_frontier_target2(frontier_regions)
+                    self.chosen_frontier_count = 0
 
             if chosen_frontier:
                 path_to_frontier = self.map_object.find_path_for_frontier(self.get_map_position(), chosen_frontier)
@@ -697,37 +765,30 @@ class MyRobot(Supervisor):
                     self.camera_detection_signal = None  # Reset signal to allow camera thread to set new ones
 
                     if signal == 'red_wall':
+                        self.mark_closure_block()
                         self.align_to_red_wall()
                         # print('Done align to red wall')
                         random_duration = random.randint(700, 900)
                         self.turn_right_milisecond(random_duration)
                         print('----random turn after red wall done----')
 
-                    elif signal[0] == 'column':
-                        _, color = signal
-                        column_distance = self.estimate_column_distance(color) 
-                        if column_distance is not None:
-                            column_position = self.position_ahead(column_distance / 100) 
-                            column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
-                            self.update_column_position(color, column_map_position)
+                    # elif signal[0] == 'column':
+                    #     _, color = signal
+                    #     column_distance = self.estimate_column_distance(color) 
+                    #     if column_distance is not None:
+                    #         column_position = self.position_ahead(column_distance / 100) 
+                    #         column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
+                    #         self.update_column_position(color, column_map_position)
                             
-                            if color == 'blue':
-                                map_object.update_map_point(column_map_position, value=BLUE_COLUMN) 
-                            elif color == 'yellow':
-                                map_object.update_map_point(column_map_position, value=YELLOW_COLUMN)
+                    #         if color == 'blue':
+                    #             map_object.update_map_point(column_map_position, value=BLUE_COLUMN) 
+                    #         elif color == 'yellow':
+                    #             map_object.update_map_point(column_map_position, value=YELLOW_COLUMN)
                             
                         # self.align_to_column(color)
                         # self.mark_on_map(column_distance, color)
 
-            # # Mapping - now handled by lidar thread, just save inflated map periodically
-            # if count % EXPLORATION_MAP_UPDATE_FREQ == 0:
-            #     with self.lidar_lock:
-            #         inflated_map = utils.inflate_obstacles(map_object.grid_map, inflation_pixels=ASTAR_FRONTIER_INFLATION)  # 0/1
-            #         bw = (inflated_map * 255).astype(np.uint8)
-            #         cv2.imwrite("../../inflated_map.png", bw)  # or .bmp
-
             # --- Random exploration movement ---
-            # if map_diff > 0.02:
             self.adapt_direction()
             self.set_robot_velocity(MOTOR_VELOCITY_FORWARD, MOTOR_VELOCITY_FORWARD)
             
@@ -1220,3 +1281,35 @@ class MyRobot(Supervisor):
         centroid_y = int(np.mean(region_cells[:, 1]) + random.randint(-5, 5))
         
         return (centroid_x, centroid_y)
+
+    def select_frontier_near_known_points(self, frontier_regions, top_k=3, max_jitter=5):
+        """Bias frontier selection toward regions near known columns/start/end.
+
+        - Uses estimated column positions (blue/yellow) and start/end points if available.
+        - Takes up to `top_k` closest frontier regions to any known point, then chooses a random
+          cell from one of those regions with a small jitter.
+        - Returns None if no anchors or no frontier regions exist.
+        """
+        if not frontier_regions:
+            return None
+
+        anchors = [p for p in [self.start_point, self.end_point, self.blue_estimated_pos, self.yellow_estimated_pos] if p is not None]
+        if len(anchors) == 0:
+            return None
+
+        region_distances = []
+        for region in frontier_regions:
+            region_cells = np.array(region)
+            centroid = np.mean(region_cells, axis=0)
+            dists = [np.linalg.norm(centroid - np.array(a)) for a in anchors]
+            region_distances.append((min(dists), region))
+
+        region_distances.sort(key=lambda x: x[0])
+        candidate_regions = [r for _, r in region_distances[:max(1, top_k)]]
+
+        chosen_region = random.choice(candidate_regions)
+        region_cells = np.array(chosen_region)
+        cell = random.choice(region_cells)
+        jitter_x = random.randint(-max_jitter, max_jitter)
+        jitter_y = random.randint(-max_jitter, max_jitter)
+        return (int(cell[0] + jitter_x), int(cell[1] + jitter_y))
