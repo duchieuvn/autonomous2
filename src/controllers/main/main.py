@@ -9,13 +9,14 @@ def main():
     main_path = robot.explore()
     print('Found path')
 
-    # Stage 2
-    cur_position = robot.get_map_position()
-    first_path = robot.find_path(cur_position, robot.start_point)
-    robot.step(100)
-    robot.path_following_pipeline(first_path)
-    robot.step(100)
-    robot.path_following_pipeline(main_path)
+    # # Stage 2
+    # cur_position = robot.get_map_position()
+    # first_path = robot.find_path(cur_position, robot.start_point)
+    # robot.step(100)
+    # print('Starting path following to BLUE point')
+    # robot.path_following_pipeline(first_path)
+    # robot.step(100)
+    # robot.path_following_pipeline(main_path)
     
 main()  
 

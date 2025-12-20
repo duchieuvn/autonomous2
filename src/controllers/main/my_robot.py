@@ -474,7 +474,6 @@ class MyRobot(Supervisor):
             self.end_point = tuple(self.get_map_position())  # Yellow
 
     def align_to_red_wall(self):
-        print("Aligning to red wall by moving backward...")
 
         # PD controller constants
         Kp = ALIGN_RED_WALL_KP
@@ -487,7 +486,6 @@ class MyRobot(Supervisor):
         while self.step(self.time_step) != -1:
             align_step_count += 1
             if align_step_count > 100:
-                print("Alignment timeout reached.")
                 self.stop_motor()
                 break
             hsv_img = self.get_hsv_image()
@@ -505,7 +503,6 @@ class MyRobot(Supervisor):
 
                 # Check for completion
                 if (abs(error) < error_threshold and is_middle):
-                    print("Alignment complete.")
                     self.stop_motor()
                     break
 
@@ -659,8 +656,8 @@ class MyRobot(Supervisor):
         map_position = self.get_map_position()
         self.map_object.lidar_update_grid_map(map_position, points)
 
-    def all_columns_not_found(self):
-        if (self.start_point is None) or (self.end_point is None):
+    def found_all_2_columns(self):
+        if self.start_point is not None and self.end_point is not None:
             return True
         return False
 
@@ -670,14 +667,9 @@ class MyRobot(Supervisor):
         path_to_frontier = None
 
         # Use the blue-estimated position only occasionally to avoid spamming the same guess
-        if self.column_pos_estimation['blue'] is not None and (count % 20 == 0):
-            chosen_frontier = (
-                int(self.column_pos_estimation['blue'][0] + random.randint(-10, 10)),
-                int(self.column_pos_estimation['blue'][1] + random.randint(-10, 10))
-            )
 
-        if count >= EXPLORATION_START_FRONTIER_AFTER and count % EXPLORATION_FRONTIER_SELECTION_FREQ == 0 \
-            and self.all_columns_not_found():
+        if count >= EXPLORATION_START_FRONTIER_AFTER and count % EXPLORATION_FRONTIER_SELECTION_FREQ == 0:
+            # and not self.found_all_2_columns():
             frontier_regions = self.map_object.detect_frontiers()
 
             if map_diff > 0.008 or self.chosen_frontier_count < EXPLORATION_MAP_UPDATE_FREQ:
@@ -688,6 +680,12 @@ class MyRobot(Supervisor):
                 chosen_frontier = self.select_frontier_target2(frontier_regions)
                 self.chosen_frontier_count = 0
 
+        elif self.start_point is not None and (count % 200 == 0):
+            chosen_frontier = (
+                int(self.start_point[0] + random.randint(-10, 10)),
+                int(self.start_point[1] + random.randint(-10, 10))
+            )
+        
         if chosen_frontier:
             path_to_frontier = self.map_object.find_path_for_frontier(self.get_map_position(), chosen_frontier)
             if path_to_frontier:
@@ -775,7 +773,11 @@ class MyRobot(Supervisor):
                                 self.end_point = column_map_position
                                 map_object.update_map_point(column_map_position, value=YELLOW_COLUMN)
                             
-
+            if count > 500 and self.found_all_2_columns():
+                print("----------")
+                print(count)
+                self.path = self.find_path(self.start_point, self.end_point)
+                vis.draw_path(self.path)
             # --- Random exploration movement ---
             # if map_diff > 0.02:
             self.adapt_direction()
@@ -847,16 +849,10 @@ class MyRobot(Supervisor):
                     vis.draw_point(chosen_frontier[0], chosen_frontier[1], color=(255, 0, 0), radius=5)
                 
                 # Draw start and end points if found
-                if self.start_point is None:
-                    if self.column_pos_estimation['blue'] is not None:
-                        vis.draw_point(int(self.column_pos_estimation['blue'][0]), int(self.column_pos_estimation['blue'][1]), color=(0, 255, 255), radius=7)
-                else:
-                    vis.draw_point(self.start_point[0], self.start_point[1], color=(0, 0, 255), radius=7)
-                if self.end_point is None:
-                    if self.column_pos_estimation['yellow'] is not None:
-                        vis.draw_point(int(self.column_pos_estimation['yellow'][0]), int(self.column_pos_estimation['yellow'][1]), color=(255, 255, 0), radius=7)
-                else:
-                    vis.draw_point(self.end_point[0], self.end_point[1], color=(255, 255, 0), radius=7)
+                if self.start_point is not None:
+                    vis.draw_point(int(self.start_point[0]), int(self.start_point[1]), color=(0, 255, 255), radius=7)
+                if self.end_point is not None:
+                    vis.draw_point(int(self.end_point[0]), int(self.end_point[1]), color=(255, 255, 0), radius=7)
 
                 pygame.display.flip()
 
@@ -866,6 +862,19 @@ class MyRobot(Supervisor):
         self.stop_camera_thread()
         self.stop_lidar_thread()
         self.stop_motor()
+
+        main_path = self.path
+        vis.draw_path(main_path)
+        # Stage 2
+        cur_position = self.get_map_position()
+        first_path = self.find_path(cur_position, self.start_point)
+        self.step(100)
+        print('Starting path following to BLUE point')
+        self.path_following_pipeline(first_path, vis=vis)
+        print('Reached BLUE point')
+        self.step(100)
+        self.path_following_pipeline(main_path, vis=vis)
+        print('Reached YELLOW point')
         return self.path
 
 
@@ -1145,12 +1154,10 @@ class MyRobot(Supervisor):
 
         yellow_mask = utils.segment_color(camera_frame, 'yellow')
         if cv2.countNonZero(yellow_mask):
-            print("YELLOW")
             return 'yellow'
 
         blue_mask = utils.segment_color(camera_frame, 'blue')
         if cv2.countNonZero(blue_mask):
-            print("BLUE")
             return 'blue'
 
         return None

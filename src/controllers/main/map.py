@@ -236,21 +236,28 @@ class GridMap():
 
 
     def find_path(self, start_point, end_point):
-        """Plan a path from start to end using clearance-aware A* with escalating inflation."""
+        """Plan a path from start to end using clearance-aware A* with escalating inflation.
+        Strictly traverses only FREESPACE; blocks UNKNOWN, CLOSED, and OBSTACLE.
+        """
         inflation_attempts = ASTAR_INFLATION_LEVELS
         best_path = None
         best_len = 0.0
 
         for inflation_pixels in inflation_attempts:
-            global_map = self.grid_map.copy().astype(np.float32)
-            global_map = utils.remove_noisy_pixels(global_map, obstacle_value=OBSTACLE, connectivity=4)
+            # Strict walkability: only FREESPACE (0) is traversable; UNKNOWN/CLOSED/OBSTACLE are blocked
+            base_map = self.grid_map.copy()
+            strict_map = np.ones_like(base_map, dtype=np.uint8)
+            strict_map[base_map == FREESPACE] = 0
+
+            # Standard preprocessing on strict binary map
+            global_map = utils.remove_noisy_pixels(strict_map.astype(np.float32), obstacle_value=1, connectivity=4)
             global_map = utils.inflate_obstacles(global_map, inflation_pixels=inflation_pixels)
             utils.expand_free_pixel(global_map, end_point, inflation_pixels=ASTAR_EXPANSION_PIXELS)
             utils.expand_free_pixel(global_map, start_point, inflation_pixels=ASTAR_EXPANSION_PIXELS)
 
             path = runAStarSearchSpline(global_map, start_point, end_point)
-
-            if path is None or len(path) <= 1:
+            
+            if not path or len(path) <= 1:
                 continue
 
             # Compute total path length in meters
@@ -280,12 +287,14 @@ class GridMap():
             print(f"[info] find_path: no path met minimum {PATH_MIN_LENGTH_M}m; returning longest candidate {best_len:.2f}m")
             return best_path
 
-        # Fallback: try planning on raw grid
+        # Fallback: try planning on raw strict binary grid (still blocking UNKNOWN)
         try:
-            raw_map = self.grid_map.copy().astype(np.float32)
-            raw_map = utils.remove_noisy_pixels(raw_map, obstacle_value=OBSTACLE, connectivity=4)
+            base_map = self.grid_map.copy()
+            raw_strict = np.ones_like(base_map, dtype=np.uint8)
+            raw_strict[base_map == FREESPACE] = 0
+            raw_map = utils.remove_noisy_pixels(raw_strict.astype(np.float32), obstacle_value=1, connectivity=4)
             raw_path = runAStarSearchSpline(raw_map, start_point, end_point)
-            if raw_path is not None and len(raw_path) > 1:
+            if raw_path and len(raw_path) > 1:
                 try:
                     raw_len = 0.0
                     prev_w = self.robot.convert_to_world_coordinates(raw_path[0][0], raw_path[0][1])
@@ -302,8 +311,8 @@ class GridMap():
         except Exception as e:
             print(f"[warning] find_path raw-map fallback failed: {e}")
 
-        print(f"[info] find_path: no path found between points after inflation attempts; returning None")
-        return None
+        print(f"[info] find_path: no path found between points after inflation attempts; returning []")
+        return []
 
     def find_path_for_frontier(self, start_point, end_point):
         if start_point is None or end_point is None:
