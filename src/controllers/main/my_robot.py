@@ -47,6 +47,12 @@ class MyRobot(Supervisor):
         self.lidar_thread = None
         self.lidar_thread_running = False
         self.lidar_lock = threading.Lock()  # Lock for thread synchronization
+        # Multi-threading for stuck detection
+        self.stuck_thread = None
+        self.stuck_thread_running = False
+        self.stuck_signal = False  # Flag raised by stuck thread
+        self.stuck_last_position = None
+        self.stuck_lock = threading.Lock()
 
     def start_camera_thread(self):
         """Start the continuous detection thread for red walls and columns."""
@@ -79,6 +85,22 @@ class MyRobot(Supervisor):
         if self.lidar_thread:
             self.lidar_thread.join(timeout=1.0)
             print("[Lidar] Stopped lidar mapping thread")
+
+    def start_stuck_thread(self):
+        """Start the stuck detection thread."""
+        if self.stuck_thread and self.stuck_thread.is_alive():
+            return
+        self.stuck_thread_running = True
+        self.stuck_thread = threading.Thread(target=self.stuck_detection_loop, daemon=True)
+        self.stuck_thread.start()
+        print("[Stuck] Started stuck detection thread")
+
+    def stop_stuck_thread(self):
+        """Stop the stuck detection thread."""
+        self.stuck_thread_running = False
+        if self.stuck_thread:
+            self.stuck_thread.join(timeout=1.0)
+            print("[Stuck] Stopped stuck detection thread")
 
     def camera_detection_loop(self):
         """Continuous detection loop with shared variable communication."""
@@ -134,7 +156,6 @@ class MyRobot(Supervisor):
         time.sleep(1.0)
         
         while self.lidar_thread_running:
-            print("lidar thread running...--------")
             try:
                 # Check if lidar is ready
                 if self.lidar is None:
@@ -689,10 +710,11 @@ class MyRobot(Supervisor):
 
         if count >= EXPLORATION_START_FRONTIER_AFTER and count % EXPLORATION_FRONTIER_SELECTION_FREQ == 0 \
             and self.all_columns_not_found():
+            print("-----near column------")
             frontier_regions = self.map_object.detect_frontiers()
 
             # Occasionally bias frontier choice near known column estimates/start/end
-            if count % 100 == 0 and random.random() < 0.6:
+            if random.random() < 0.6:
                 chosen_frontier = self.select_frontier_near_known_points(frontier_regions)
 
             # Fallback to existing selection logic if none chosen
@@ -709,7 +731,6 @@ class MyRobot(Supervisor):
                 path_to_frontier = self.map_object.find_path_for_frontier(self.get_map_position(), chosen_frontier)
                 if path_to_frontier:
                     self.frontier_following(path_to_frontier, vis)
-                    # self.path_following_pipeline(path_to_frontier, vis if debug else None)
 
         return frontier_regions, chosen_frontier, path_to_frontier
     
@@ -756,8 +777,6 @@ class MyRobot(Supervisor):
                     if event.type == pygame.QUIT:
                         exit()
 
-
-
             # Check for camera detection signals from background thread
             with self.detection_lock:
                 if self.camera_detection_signal is not None:
@@ -790,11 +809,13 @@ class MyRobot(Supervisor):
 
             # --- Random exploration movement ---
             self.adapt_direction()
+            print("3")
             self.set_robot_velocity(MOTOR_VELOCITY_FORWARD, MOTOR_VELOCITY_FORWARD)
             
             if count % 30 == 0:
-                if self.robot_stuck(last_position):
-                    self.recover_from_stuck()
+                print(count, "------check stuck-----")
+                if self.robot_stuck(last_position, stuck_distance=0.2):
+                    self.recover_from_stuck(turn_duration=(700, 900))
                 last_position = self.get_position()
 
             map_diff = utils.percentage_map_differences(previous_map, map_object.grid_map)
@@ -1151,12 +1172,10 @@ class MyRobot(Supervisor):
 
         yellow_mask = utils.segment_color(camera_frame, 'yellow')
         if cv2.countNonZero(yellow_mask):
-            print("YELLOW")
             return 'yellow'
 
         blue_mask = utils.segment_color(camera_frame, 'blue')
         if cv2.countNonZero(blue_mask):
-            print("BLUE")
             return 'blue'
 
         return None
@@ -1168,14 +1187,13 @@ class MyRobot(Supervisor):
             return True
         return False
     
-    def recover_from_stuck(self):
+    def recover_from_stuck(self, turn_duration=(400, 600)):
         self.set_robot_velocity(-8, -8)
         self.step(300)
         print('Recover from stuck')
 
-        random_duration = random.randint(400, 600)
+        random_duration = random.randint(turn_duration[0], turn_duration[1])
         self.turn_right_milisecond(random_duration)
-        print('-------Random turn')
         # while min(distances[0], distances[2]) < 0.05:
         #     print('Still closed to obstacle')
         #     self.step(20)

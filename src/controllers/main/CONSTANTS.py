@@ -47,7 +47,7 @@ FRONTIER_VISUALIZATION_COLOR_LARGEST = 220  # [USED] Color value for largest fro
 WALL_DETECTION_THRESHOLD_FRONTIER = 0.3     # [USED] Distance (meters) to consider wall blocking frontier
 WALL_DETECTION_THRESHOLD_PATH_FOLLOWING = 0.2  # [HARDCODED] Distance (meters) to consider wall blocking path (used as hardcoded 0.2 in path_following_pipeline)
 OBSTACLE_AVOID_THRESHOLD = 0.25             # [USED] Distance (meters) for obstacle avoidance during exploration
-OBSTACLE_AVOID_MAX_ATTEMPTS = 3             # [USED] Max attempts to avoid obstacle before giving up
+OBSTACLE_AVOID_MAX_ATTEMPTS = 2             # [USED] Max attempts to avoid obstacle before giving up
 
 # --- DWA PLANNER (Dynamic Window Approach) ---
 DWA_VELOCITY_SAMPLES = [0.1, 0.15, 0.2, 0.25, 0.4, 0.45]  # [USED] Velocity samples (m/s)
@@ -119,7 +119,7 @@ MAPPING_PROBABILITY_FREE = 0.5              # [UNUSED] Probability threshold for
 # --- A* PATHFINDING ---
 ASTAR_INFLATION_LEVELS = [2.5, 3, 3.5, 4]   # [USED] Inflation levels for escalating A*
 ASTAR_EXPANSION_PIXELS = 3                 # [USED] Expansion around start/end points
-ASTAR_FRONTIER_INFLATION = 4              # [UNUSED] Inflation level for frontier pathfinding (hardcoded 13 in find_path_for_frontier)
+ASTAR_FRONTIER_INFLATION = 5           # [UNUSED] Inflation level for frontier pathfinding (hardcoded 13 in find_path_for_frontier)
 
 # ============================================================================
 # END HYPERPARAMETERS

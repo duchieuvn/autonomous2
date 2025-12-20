@@ -326,7 +326,7 @@ class GridMap():
         global_map = temp_map
         utils.expand_free_pixel(global_map, end_point, inflation_pixels=ASTAR_EXPANSION_PIXELS)
         utils.expand_free_pixel(global_map, start_point, inflation_pixels=ASTAR_EXPANSION_PIXELS)
-        
+        cv2.imwrite("debug_frontier_map.png", global_map*255)
         path = runAStarSearchSpline(global_map, start_point, end_point)
         return path
 
