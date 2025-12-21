@@ -300,9 +300,18 @@ class MyRobot(Supervisor):
         self.step(s)
         self.stop_motor()
 
+    def move_backward_milisecond(self, s=300):
+        self.set_robot_velocity(-7, -7)
+        self.step(s)
+        self.stop_motor()
+
     def adapt_direction(self):
         count = 0
         distances = self.get_distances()
+
+        if np.mean(distances) < 0.3:
+            self.move_backward_milisecond(50)
+            return
 
         while (min(distances[0], distances[2]) < OBSTACLE_AVOID_THRESHOLD and count < OBSTACLE_AVOID_MAX_ATTEMPTS):
             second = random.randint(TURN_DURATION_MIN, TURN_DURATION_MAX)
@@ -710,20 +719,21 @@ class MyRobot(Supervisor):
 
         if count >= EXPLORATION_START_FRONTIER_AFTER and count % EXPLORATION_FRONTIER_SELECTION_FREQ == 0 \
             and self.all_columns_not_found():
-            print("-----near column------")
             frontier_regions = self.map_object.detect_frontiers()
 
             # Occasionally bias frontier choice near known column estimates/start/end
             if random.random() < 0.6:
+                print("---Near column frontier")
                 chosen_frontier = self.select_frontier_near_known_points(frontier_regions)
 
             # Fallback to existing selection logic if none chosen
             if chosen_frontier is None:
-                if map_diff > 0.005 or self.chosen_frontier_count < EXPLORATION_MAP_UPDATE_FREQ:
+                if self.chosen_frontier_count < EXPLORATION_MAP_UPDATE_FREQ:
+                    print("---Nearest frontier")
                     chosen_frontier = self.select_frontier_target(frontier_regions)
                     self.chosen_frontier_count += 1
                 else:
-                    print("Map is not explored enough, select different frontier region")
+                    print("---Random frontier")
                     chosen_frontier = self.select_frontier_target2(frontier_regions)
                     self.chosen_frontier_count = 0
 
@@ -751,6 +761,11 @@ class MyRobot(Supervisor):
         1. Find blue
         2. Find yellow
         3. Explore randomly, occasionally follow frontier targets
+
+        TODO:
+        - improve column distance estimation (far or close)
+        - Stop when both columns found
+        - Path following from start to end in another function
         '''
 
         # Start continuous detection and lidar threads before any setup
@@ -789,7 +804,6 @@ class MyRobot(Supervisor):
                         # print('Done align to red wall')
                         random_duration = random.randint(700, 900)
                         self.turn_right_milisecond(random_duration)
-                        print('----random turn after red wall done----')
 
                     # elif signal[0] == 'column':
                     #     _, color = signal
@@ -808,13 +822,12 @@ class MyRobot(Supervisor):
                         # self.mark_on_map(column_distance, color)
 
             # --- Random exploration movement ---
-            self.adapt_direction()
-            print("3")
-            self.set_robot_velocity(MOTOR_VELOCITY_FORWARD, MOTOR_VELOCITY_FORWARD)
-            
+            if map_diff < 0.02:
+                self.adapt_direction()
+                self.set_robot_velocity(MOTOR_VELOCITY_FORWARD, MOTOR_VELOCITY_FORWARD)
+                
             if count % 30 == 0:
-                print(count, "------check stuck-----")
-                if self.robot_stuck(last_position, stuck_distance=0.2):
+                if self.robot_stuck(last_position, stuck_distance=0.16):
                     self.recover_from_stuck(turn_duration=(700, 900))
                 last_position = self.get_position()
 

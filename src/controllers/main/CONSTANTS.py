@@ -84,9 +84,9 @@ ALIGN_PATH_ROTATION_SPEED = 1.0             # [UNUSED] Angular speed (rad/s) for
 
 # --- CLOSURE MARKING ---
 CLOSURE_MARK_COOLDOWN = 5.0                 # [UNUSED] Cooldown (seconds) between closure markings (used as hardcoded in mark_closure_rect_simple)
-CLOSURE_MARK_FORWARD = 0.7                  # [USED] Forward distance (meters) for closure rectangle
+CLOSURE_MARK_FORWARD = 0.5                  # [USED] Forward distance (meters) for closure rectangle
 CLOSURE_MARK_BACKWARD = 0.05                # [USED] Backward distance (meters) for closure rectangle
-CLOSURE_MARK_WIDTH = 0.6                    # [USED] Width (meters) of closure rectangle
+CLOSURE_MARK_WIDTH = 0.8                # [USED] Width (meters) of closure rectangle
 CLOSURE_MARK_IOU_THRESHOLD = 0.4            # [UNUSED] IoU threshold to skip re-marking same closure (hardcoded 0.4 in mark_closure_rect_simple)
 
 # --- COLOR DETECTION ---
@@ -119,7 +119,7 @@ MAPPING_PROBABILITY_FREE = 0.5              # [UNUSED] Probability threshold for
 # --- A* PATHFINDING ---
 ASTAR_INFLATION_LEVELS = [2.5, 3, 3.5, 4]   # [USED] Inflation levels for escalating A*
 ASTAR_EXPANSION_PIXELS = 3                 # [USED] Expansion around start/end points
-ASTAR_FRONTIER_INFLATION = 5           # [UNUSED] Inflation level for frontier pathfinding (hardcoded 13 in find_path_for_frontier)
+ASTAR_FRONTIER_INFLATION = 4          # [UNUSED] Inflation level for frontier pathfinding (hardcoded 13 in find_path_for_frontier)
 
 # ============================================================================
 # END HYPERPARAMETERS
