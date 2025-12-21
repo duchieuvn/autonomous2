@@ -126,16 +126,24 @@ class MyRobot(Supervisor):
                         # Check for columns
                         color = self.detect_column()
                         if color:
-                            # Gate: only execute this block max 3 times per color
                             update_count = self.blue_pos_update_count if color == 'blue' else self.yellow_pos_update_count
-                            if update_count < 3:
-                                self.camera_detection_signal = ('column', color)
+                            self.camera_detection_signal = ('column', color)
+                            column_mask = utils.segment_color(self.get_hsv_image(), color)
+                            column_distance = self.estimate_column_distance(color) 
+                            
+                            if self.column_close(column_mask, column_distance):
+                                self.center_column_in_view(color)
+                                print("Column is close", column_distance)
+                                self.mark_column(color)
+
+                            # Gate: only execute this block max 3 times per color
+                            elif update_count < 3:
                                 self.center_column_in_view(color)
                                 column_distance = self.estimate_column_distance(color) 
                                 if column_distance is not None:
                                     column_position = self.position_ahead(column_distance / 100) 
                                     column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
-                                    self.update_column_position(color, column_map_position)
+                                    self.update_column_estimation(color, column_map_position)
                                     
                                     if color == 'blue':
                                         self.map_object.update_map_point(column_map_position, value=BLUE_COLUMN)
@@ -174,6 +182,16 @@ class MyRobot(Supervisor):
             except Exception as e:
                 print(f"[Lidar] Error in lidar update loop: {e}")
                 time.sleep(1.0)
+
+    def column_close(self, column_mask, column_distance):
+        nonzero_pixels = np.count_nonzero(column_mask)
+        ratio = nonzero_pixels / (column_mask.shape[0] * column_mask.shape[1])
+        print("----Column ratio:", ratio)
+        # If the column occupies more than 40% of the image -> close
+        if ratio > 0.34:
+            return True
+        else:
+            return False
 
     def is_turning(self):
         # Check if the robot is turning, with 10-step cooldown after turning stops
@@ -707,8 +725,8 @@ class MyRobot(Supervisor):
         map_position = self.get_map_position()
         self.map_object.lidar_update_grid_map(map_position, points)
 
-    def all_columns_not_found(self):
-        if (self.start_point is None) or (self.end_point is None):
+    def found_all_2_columns(self):
+        if (self.start_point is not None) and (self.end_point is not None):
             return True
         return False
 
@@ -717,8 +735,7 @@ class MyRobot(Supervisor):
         chosen_frontier = None
         path_to_frontier = None
 
-        if count >= EXPLORATION_START_FRONTIER_AFTER and count % EXPLORATION_FRONTIER_SELECTION_FREQ == 0 \
-            and self.all_columns_not_found():
+        if count >= EXPLORATION_START_FRONTIER_AFTER and count % EXPLORATION_FRONTIER_SELECTION_FREQ == 0:
             frontier_regions = self.map_object.detect_frontiers()
 
             # Occasionally bias frontier choice near known column estimates/start/end
@@ -744,7 +761,19 @@ class MyRobot(Supervisor):
 
         return frontier_regions, chosen_frontier, path_to_frontier
     
-    def update_column_position(self, color, position):
+    def mark_column(self, color):
+        if color == 'blue':
+            self.start_point = self.get_map_position() 
+        elif color == 'yellow':
+            self.end_point = self.get_map_position()
+
+
+    def update_column_estimation(self, color, position):
+        """
+        Only use when the column is far away
+        Update estimated position of the column
+        Used for estimation only, not the actual marking on the map 
+        """
         if color == 'blue':
             if self.blue_estimated_pos is None:
                 self.blue_estimated_pos = position
@@ -786,7 +815,7 @@ class MyRobot(Supervisor):
         frontier_regions = []
         last_position = self.get_position()
 
-        while self.step(self.time_step) != -1 and len(self.path) == 0:
+        while self.step(self.time_step) != -1 and not self.found_all_2_columns():
             if debug:
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
