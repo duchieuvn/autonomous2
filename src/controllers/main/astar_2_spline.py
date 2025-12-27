@@ -111,7 +111,7 @@ def runAStarSearch(global_map, start_coords, goal_coords):
         
         return corners
 
-    def smoothPath(path, method='natural_spline', smoothness=0.3):
+    def smoothPath(path, method='bspline', smoothness=0.3):
         """
         Multiple smoothing methods with different characteristics
         
@@ -130,6 +130,8 @@ def runAStarSearch(global_map, start_coords, goal_coords):
             return _naturalSplineSmooth(path, smoothness)
         elif method == 'parametric_spline':
             return _parametricSplineSmooth(path, smoothness)
+        elif method == 'bspline':
+            return _bsplineSmooth(path, smoothness)
         elif method == 'corner_aware':
             return _cornerAwareSmooth(path, smoothness)
         elif method == 'bezier_like':
@@ -244,6 +246,30 @@ def runAStarSearch(global_map, start_coords, goal_coords):
         smooth_coords = np.array(smooth_points)
         return _finalizeSmoothedPath(smooth_coords[:, 0], smooth_coords[:, 1])
 
+    def _bsplineSmooth(path, smoothness):
+        """Simple dedicated B-spline smoothing using parametric fitting.
+
+        - Uses `splprep`/`splev` but exposes a simple smoothing parameter mapping.
+        - Returns integer map-grid points like other smoothers.
+        """
+        if len(path) < 4:
+            return _naturalSplineSmooth(path, smoothness)
+
+        x, y = path[:, 0], path[:, 1]
+
+        # Simple smoothing factor: proportional to requested smoothness and path length
+        s_val = max(0.0, smoothness * len(path))
+
+        try:
+            tck, u = splprep([x, y], s=s_val, k=3)
+            samples = max(10, len(path) * 8)
+            u_fine = np.linspace(0, 1, samples)
+            smooth_coords = splev(u_fine, tck)
+            return _finalizeSmoothedPath(smooth_coords[0], smooth_coords[1])
+        except Exception:
+            # Fallback to parametric if fitting fails
+            return _parametricSplineSmooth(path, smoothness)
+
     def _finalizeSmoothedPath(smooth_x, smooth_y):
         """Convert smooth coordinates to integer path and remove duplicates"""
         smooth_path = [(int(round(x)), int(round(y))) for x, y in zip(smooth_x, smooth_y)]
@@ -286,7 +312,8 @@ def runAStarSearch(global_map, start_coords, goal_coords):
     # Try different smoothing methods:
     # smooth_path = smoothPath(path, method='natural_spline', smoothness=0.9)
     # smooth_path = smoothPath(path, method='parametric_spline', smoothness=0.7)
-    smooth_path = smoothPath(path, method='corner_aware', smoothness=1.0)
+    # smooth_path = smoothPath(path, method='corner_aware', smoothness=1.0)
     # smooth_path = smoothPath(path, method='bezier_like', smoothness=0.8)
+    smooth_path = smoothPath(path, method='bspline', smoothness=0.5)
     
     return smooth_path
