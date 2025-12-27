@@ -17,7 +17,7 @@ YELLOW_COLUMN = 150
 # Must be different from FREESPACE_VALUE (0) and UNKNOWN_VALUE (255)
 CLOSED = 200
 # Special marker value for green carpet detection
-GREEN_CARPET = 180
+GREEN_CARPET = 190
 # Minimum acceptable path length (meters) for final start->end planning.
 # If a found path is shorter than this, the planner will retry with larger
 # obstacle inflation to avoid tiny-gap shortcuts.

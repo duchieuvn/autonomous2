@@ -37,6 +37,8 @@ class MapVisualizer:
             100: (0, 255, 0),     # start: green
             150: (0, 0, 255),     # end: blue
             180: (0, 255, 255),   # frontier generic: cyan
+            # green for carpet
+            190: (34, 139, 34),   # carpet: forest green
             # Frontier size gradient (values defined in CONSTANTS)
             50: (0, 0, 255),      # small: blue
             101: (0, 255, 255),   # medium: cyan (distinct from START_POINT_VALUE)

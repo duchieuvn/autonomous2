@@ -87,6 +87,7 @@ class MyRobot(Supervisor):
         self.last_green_mark_time = 0.0
         self.green_mark_cooldown = 8.0
         self.last_green_carpet_points = []
+        self.green_carpet_active = False
 
     def start_camera_thread(self):
         """Start the continuous detection thread for red walls and columns."""
@@ -155,6 +156,10 @@ class MyRobot(Supervisor):
                         red_wall = self.there_is_red_wall()
                         if red_wall:
                             self.camera_detection_signal = 'red_wall'
+                            continue
+                        # Green carpet has priority — skip column detection
+                        if self.green_carpet_active:
+                            # time.sleep(0.1)
                             continue
 
                         # Check for columns
@@ -864,6 +869,7 @@ class MyRobot(Supervisor):
                 if self.camera_detection_signal is not None:
                     signal = self.camera_detection_signal
                     self.camera_detection_signal = None  # Reset signal to allow camera thread to set new ones
+                    
 
                     if signal == 'red_wall':
                         self.mark_closure_block()
@@ -871,6 +877,12 @@ class MyRobot(Supervisor):
                         # print('Done align to red wall')
                         random_duration = random.randint(700, 900)
                         self.turn_right_milisecond(random_duration)
+
+                    if signal is not None:
+                        if signal[0] == 'column':
+                            _, color = signal
+                            # PASSIVE behavior only
+                            print(f"[Passive] Column {color} observed during path following")
 
                     # elif signal[0] == 'column':
                     #     _, color = signal
@@ -1120,12 +1132,14 @@ class MyRobot(Supervisor):
     #                     return
     #     self.stop_motor()
 
-    def frontier_following(self, path, vis=None, replan_interval=40):
+    def frontier_following(self, path, vis=None, replan_interval=80):
         """
         Frontier following with:
         - timestep-based replanning
         - front obstacle recovery (reverse → wait → replan)
-        - safe fallback behavior
+        - ACTIVE red wall handling (interrupt + closure + align + turn)
+        - ACTIVE green carpet marking (polled periodically; does NOT drop path unless you want it to)
+        - PASSIVE column handling (observe/mark only; never drop path)
         """
 
         if path is None or len(path) == 0:
@@ -1140,52 +1154,110 @@ class MyRobot(Supervisor):
         OBSTACLE_THRESHOLD = 0.22   # meters
         REVERSE_DISTANCE = 0.12     # meters
         MAP_UPDATE_WAIT_STEPS = 6   # allow LiDAR/map to update
+        CARPET_CHECK_EVERY = 20     # timesteps (cheap + safe)
 
         while target_index < len(current_path):
             target = current_path[target_index]
 
-            while self.step(self.time_step) != -1 and self.camera_detection_signal is None:
+            while self.step(self.time_step) != -1:
                 timestep_counter += 1
                 last_position = self.get_position()
 
                 # --------------------------------------------------
-                # 🚧 FRONT OBSTACLE → REVERSE → WAIT → REPLAN
+                # 1) ACTIVE: Handle camera signals here (selective)
+                # --------------------------------------------------
+                signal = None
+                with self.detection_lock:
+                    if self.camera_detection_signal is not None:
+                        signal = self.camera_detection_signal
+                        self.camera_detection_signal = None
+
+                # 🔴 Red wall: INTERRUPT path following (same as explore)
+                if signal == 'red_wall':
+                    print("[Frontier] Red wall detected during path following")
+
+                    self.stop_motor()
+                    self.mark_closure_block()
+                    self.align_to_red_wall()
+
+                    random_duration = random.randint(700, 900)
+                    self.turn_right_milisecond(random_duration)
+
+                    # After wall handling, replan to the SAME goal using current position
+                    try:
+                        # Let map update a bit (and lidar thread run)
+                        for _ in range(MAP_UPDATE_WAIT_STEPS):
+                            if self.step(self.time_step) == -1:
+                                break
+
+                        current_start = self.get_map_position()
+                        new_path = self.map_object.find_path_for_frontier(current_start, frontier_goal)
+
+                        if new_path and len(new_path) > 5:
+                            print("[Frontier] Replanned after red wall")
+                            current_path = new_path
+                            target_index = 5
+                            break
+                        else:
+                            print("[Frontier] Replan failed after red wall, dropping frontier")
+                            return
+                    except Exception as e:
+                        print(f"[Frontier] Replan error after red wall: {e}")
+                        return
+
+                # 🔵🟡 Column: PASSIVE only (consume signal; keep moving)
+                if isinstance(signal, tuple) and len(signal) >= 2 and signal[0] == 'column':
+                    _, color = signal
+                    # Do NOT break, do NOT return.
+                    # The camera thread already updated estimates/map if needed.
+                    # Just log (optional).
+                    # print(f"[Frontier] Passive column {color} seen; continuing path")
+                    pass
+
+                # --------------------------------------------------
+                # 2) ACTIVE: Green carpet marking during path following
+                #    (Polling approach: safe, uses your internal guards)
+                # --------------------------------------------------
+                if timestep_counter % CARPET_CHECK_EVERY == 0:
+                    try:
+                        marked = self.mark_green_carpet_permanently(min_pixel_threshold=7000)
+                        if marked:
+                            # Optional: brief settle to let lidar/map protect region
+                            for _ in range(2):
+                                if self.step(self.time_step) == -1:
+                                    break
+                    except Exception as e:
+                        print(f"[Green Carpet] marking attempt failed during frontier_following: {e}")
+
+                # --------------------------------------------------
+                # 3) FRONT OBSTACLE → REVERSE → WAIT → REPLAN
                 # --------------------------------------------------
                 front_dist = self.get_min_front_distance()
-
                 if front_dist < OBSTACLE_THRESHOLD:
                     print(f"[Frontier] Obstacle ahead at {front_dist:.2f} m")
 
-                    # Stop immediately
                     self.stop_motor()
 
-                    # --- Small reverse ---
                     back_speed = 0.12  # m/s
-                    dt = TIME_STEP / 1000.0
+                    dt = (TIME_STEP + 50) / 1000.0
                     steps = max(1, int(REVERSE_DISTANCE / (back_speed * dt)))
 
                     lw, rw = self.velocity_to_wheel_speeds(-back_speed, 0.0)
                     self.set_robot_velocity(lw, rw)
-
                     for _ in range(steps):
                         if self.step(self.time_step) == -1:
                             break
-
                     self.stop_motor()
 
-                    # --- IMPORTANT: wait for map update ---
+                    # wait for map update (lidar thread + stabilization)
                     for _ in range(MAP_UPDATE_WAIT_STEPS):
                         if self.step(self.time_step) == -1:
                             break
 
-                    # --- Replan using updated map ---
+                    # replan with updated map
                     try:
                         current_start = self.get_map_position()
-                        new_path = self.map_object.find_path_for_frontier(
-                            current_start,
-                            frontier_goal
-                        )
-
+                        new_path = self.map_object.find_path_for_frontier(current_start, frontier_goal)
                         if new_path and len(new_path) > 5:
                             print("[Frontier] Replanned after obstacle")
                             current_path = new_path
@@ -1199,16 +1271,12 @@ class MyRobot(Supervisor):
                         return
 
                 # --------------------------------------------------
-                # 🔁 PERIODIC TIMESTEP-BASED REPLANNING
+                # 4) PERIODIC TIMESTEP-BASED REPLANNING
                 # --------------------------------------------------
                 if timestep_counter % replan_interval == 0:
                     try:
                         current_start = self.get_map_position()
-                        new_path = self.map_object.find_path_for_frontier(
-                            current_start,
-                            frontier_goal
-                        )
-
+                        new_path = self.map_object.find_path_for_frontier(current_start, frontier_goal)
                         if new_path and len(new_path) > 5:
                             print("[Replan] Periodic path update")
                             current_path = new_path
@@ -1218,7 +1286,7 @@ class MyRobot(Supervisor):
                         print(f"[Replan] Failed: {e}")
 
                 # --------------------------------------------------
-                # Visualization (unchanged)
+                # 5) Visualization
                 # --------------------------------------------------
                 if vis:
                     vis.display(self.map_object.grid_map)
@@ -1229,14 +1297,14 @@ class MyRobot(Supervisor):
                     pygame.display.flip()
 
                 # --------------------------------------------------
-                # Follow local target
+                # 6) Follow local target
                 # --------------------------------------------------
                 if self.follow_local_target(target):
                     stuck_counter = 0
                     break
 
                 # --------------------------------------------------
-                # Original stuck logic (unchanged)
+                # 7) Stuck logic (unchanged)
                 # --------------------------------------------------
                 if self.robot_stuck(last_position, stuck_distance=0.08):
                     stuck_counter += 1
@@ -1249,6 +1317,7 @@ class MyRobot(Supervisor):
             target_index += 5
 
         self.stop_motor()
+
 
 
 
@@ -1733,7 +1802,7 @@ class MyRobot(Supervisor):
         Returns:
             bool: True if a permanent mark was successfully made, False otherwise.
         """
-        
+        self.green_carpet_active = True
         # 1. Detect Green Carpet Points & Proximity Check
         current_map_points = self.get_green_carpet_points() 
         current_detection_size = current_map_points.shape[0]
@@ -1777,6 +1846,7 @@ class MyRobot(Supervisor):
             else:
                 # Too close and not large enough: Skip marking to prevent shrinking/jitter noise.
                 # print(f"[Green Carpet] Skipping mark. Too close to known patch at [{old_x:.0f} {old_y:.0f}].")
+                self.green_carpet_active = False
                 return False 
         
         # --- 3. Newness Check (Runs only if it's a new patch or passed Expansion Rule) ---
@@ -1792,6 +1862,7 @@ class MyRobot(Supervisor):
         
         if newness_ratio < new_area_threshold:
             # Area is already mostly marked (This is the final guardrail against unnecessary marking)
+            self.green_carpet_active = False
             return False
 
         # --- 4. Align and Final Permanent Mark ---
@@ -1824,12 +1895,15 @@ class MyRobot(Supervisor):
                 self.last_green_carpet_points = [tuple(p) for p in final_pts]
 
                 print(f"[Map Update] Successfully marked new persistent green carpet ({final_size} pixels).")
+                self.green_carpet_active = False
                 return True
             except Exception as e:
                 print(f"[warning] Failed to apply permanent green mark: {e}")
+                self.green_carpet_active = False
                 return False
         else:
             print("[Green Carpet] Lost detection after alignment.")
+            self.green_carpet_active = False
             return False
             
     def convert_to_map_coordinate_matrix(self, points_world):

@@ -27,8 +27,11 @@ class GridMap():
 
     def there_is_obstacle(self, map_target):
         """Check if a map target contains an obstacle."""
-        if self.grid_map[map_target[1], map_target[0]] == OBSTACLE:
+        cell = self.grid_map[map_target[1], map_target[0]]
+
+        if cell == OBSTACLE or cell == GREEN_CARPET:
             return True
+
         return False
 
     def update_log_odds(self, robot_pos, lidar_map_points):
@@ -312,16 +315,20 @@ class GridMap():
         """Frontier-specific path finder using clearance-aware A*."""
         global_map = self.grid_map.copy().astype(np.float32)
         closed_mask = (global_map == CLOSED)
+        green_mask  = (global_map == GREEN_CARPET)
 
         # Temporary map: treat closed cells as free to avoid inflation expansion
         temp_map = global_map.copy()
         temp_map[closed_mask] = FREESPACE
+        temp_map[green_mask]  = FREESPACE
+        
 
         # Run standard preprocessing on temp_map
         temp_map = utils.inflate_obstacles(temp_map, inflation_pixels=ASTAR_FRONTIER_INFLATION)
 
         # Re-apply closed pixels as hard obstacles
         temp_map[closed_mask] = OBSTACLE
+        temp_map[green_mask]  = OBSTACLE
 
         global_map = temp_map
         utils.expand_free_pixel(global_map, end_point, inflation_pixels=ASTAR_EXPANSION_PIXELS)
