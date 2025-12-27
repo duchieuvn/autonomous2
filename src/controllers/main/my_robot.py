@@ -171,7 +171,7 @@ class MyRobot(Supervisor):
                                 self.mark_column(color)
 
                             # Gate: only execute this block max 3 times per color
-                            elif update_count < 3:
+                            elif update_count < 2:
                                 self.center_column_in_view(color)
                                 column_distance = self.estimate_column_distance(color) 
                                 if column_distance is not None:
@@ -203,6 +203,10 @@ class MyRobot(Supervisor):
                 if self.lidar is None:
                     time.sleep(0.5)
                     continue
+                # DO NOT UPDATE MAP IF ROBOT IS NOT ON GROUND
+                if not self.robot_on_ground():
+                    time.sleep(0.1)
+                    continue
                     
                 # Only update map when robot is not turning
                 if not self.is_turning():
@@ -211,7 +215,7 @@ class MyRobot(Supervisor):
                         self.step(self.time_step)
                         time.sleep(0.1)  # Allow robot to stabilize
                         self.lidar_update_map()
-                time.sleep(0.5)  # Update at same frequency as before
+                time.sleep(0.2)  # Update at same frequency as before
 
             except Exception as e:
                 print(f"[Lidar] Error in lidar update loop: {e}")
@@ -1082,39 +1086,171 @@ class MyRobot(Supervisor):
         self.stop_motor()
         return True
 
-    def frontier_following(self, path, vis=None):
-        stuck_counter = 0
-        for target in path[5::5]:
-            while self.step() != -1 and self.camera_detection_signal is None:
-                last_position = self.get_position()
-                for event in pygame.event.get(): 
-                    if event.type == pygame.QUIT:
-                        exit()
+    # def frontier_following(self, path, vis=None):
+    #     stuck_counter = 0
+    #     for target in path[5::5]:
+    #         while self.step() != -1 and self.camera_detection_signal is None:
+    #             last_position = self.get_position()
+    #             for event in pygame.event.get(): 
+    #                 if event.type == pygame.QUIT:
+    #                     exit()
 
+    #             if vis:
+    #                 vis.display(self.map_object.grid_map)
+    #                 vis.draw_path(path)
+    #                 rx, ry = self.get_map_position()
+    #                 vis.draw_point(rx, ry, color=(0, 0, 255), radius=5)
+    #                 vis.draw_point(target[0], target[1], color=(0, 255, 0), radius=3)
+    #                 pygame.display.flip()
+
+                
+                
+    #             if self.follow_local_target(target):
+    #                 stuck_counter = 0
+    #                 break
+                
+    #             if self.robot_stuck(last_position, stuck_distance=0.08):
+    #                 stuck_counter += 1
+    #                 if stuck_counter > 50:
+    #                     print("Stuck in frontier_following, drop path...")
+    #                     self.stop_motor()
+    #                     # self.lidar_update_map()
+    #                     self.recover_from_stuck()
+                        
+    #                     return
+    #     self.stop_motor()
+
+    def frontier_following(self, path, vis=None, replan_interval=40):
+        """
+        Frontier following with:
+        - timestep-based replanning
+        - front obstacle recovery (reverse → wait → replan)
+        - safe fallback behavior
+        """
+
+        if path is None or len(path) == 0:
+            return
+
+        frontier_goal = path[-1]          # Fixed goal
+        current_path = list(path)
+        timestep_counter = 0
+        stuck_counter = 0
+
+        target_index = 5
+        OBSTACLE_THRESHOLD = 0.22   # meters
+        REVERSE_DISTANCE = 0.12     # meters
+        MAP_UPDATE_WAIT_STEPS = 6   # allow LiDAR/map to update
+
+        while target_index < len(current_path):
+            target = current_path[target_index]
+
+            while self.step(self.time_step) != -1 and self.camera_detection_signal is None:
+                timestep_counter += 1
+                last_position = self.get_position()
+
+                # --------------------------------------------------
+                # 🚧 FRONT OBSTACLE → REVERSE → WAIT → REPLAN
+                # --------------------------------------------------
+                front_dist = self.get_min_front_distance()
+
+                if front_dist < OBSTACLE_THRESHOLD:
+                    print(f"[Frontier] Obstacle ahead at {front_dist:.2f} m")
+
+                    # Stop immediately
+                    self.stop_motor()
+
+                    # --- Small reverse ---
+                    back_speed = 0.12  # m/s
+                    dt = TIME_STEP / 1000.0
+                    steps = max(1, int(REVERSE_DISTANCE / (back_speed * dt)))
+
+                    lw, rw = self.velocity_to_wheel_speeds(-back_speed, 0.0)
+                    self.set_robot_velocity(lw, rw)
+
+                    for _ in range(steps):
+                        if self.step(self.time_step) == -1:
+                            break
+
+                    self.stop_motor()
+
+                    # --- IMPORTANT: wait for map update ---
+                    for _ in range(MAP_UPDATE_WAIT_STEPS):
+                        if self.step(self.time_step) == -1:
+                            break
+
+                    # --- Replan using updated map ---
+                    try:
+                        current_start = self.get_map_position()
+                        new_path = self.map_object.find_path_for_frontier(
+                            current_start,
+                            frontier_goal
+                        )
+
+                        if new_path and len(new_path) > 5:
+                            print("[Frontier] Replanned after obstacle")
+                            current_path = new_path
+                            target_index = 5
+                            break
+                        else:
+                            print("[Frontier] Replan failed, dropping frontier")
+                            return
+                    except Exception as e:
+                        print(f"[Frontier] Replan error: {e}")
+                        return
+
+                # --------------------------------------------------
+                # 🔁 PERIODIC TIMESTEP-BASED REPLANNING
+                # --------------------------------------------------
+                if timestep_counter % replan_interval == 0:
+                    try:
+                        current_start = self.get_map_position()
+                        new_path = self.map_object.find_path_for_frontier(
+                            current_start,
+                            frontier_goal
+                        )
+
+                        if new_path and len(new_path) > 5:
+                            print("[Replan] Periodic path update")
+                            current_path = new_path
+                            target_index = 5
+                            break
+                    except Exception as e:
+                        print(f"[Replan] Failed: {e}")
+
+                # --------------------------------------------------
+                # Visualization (unchanged)
+                # --------------------------------------------------
                 if vis:
                     vis.display(self.map_object.grid_map)
-                    vis.draw_path(path)
+                    vis.draw_path(current_path)
                     rx, ry = self.get_map_position()
                     vis.draw_point(rx, ry, color=(0, 0, 255), radius=5)
-                    vis.draw_point(target[0], target[1], color=(0, 255, 0), radius=3)
+                    vis.draw_point(frontier_goal[0], frontier_goal[1], color=(255, 0, 0), radius=5)
                     pygame.display.flip()
 
-                
-                
+                # --------------------------------------------------
+                # Follow local target
+                # --------------------------------------------------
                 if self.follow_local_target(target):
                     stuck_counter = 0
                     break
-                
+
+                # --------------------------------------------------
+                # Original stuck logic (unchanged)
+                # --------------------------------------------------
                 if self.robot_stuck(last_position, stuck_distance=0.08):
                     stuck_counter += 1
                     if stuck_counter > 50:
                         print("Stuck in frontier_following, drop path...")
                         self.stop_motor()
-                        # self.lidar_update_map()
                         self.recover_from_stuck()
-                        
                         return
+
+            target_index += 5
+
         self.stop_motor()
+
+
 
 
     def path_following_pipeline(self, path, vis=None, frontier_target=None):
@@ -1715,3 +1851,21 @@ class MyRobot(Supervisor):
         points_map = points_scaled + t_map
 
         return points_map.astype(np.int32)
+    
+    def robot_on_ground(self, max_tan_pitch=0.08):
+        """
+        Returns True if robot pitch is small enough to safely use LiDAR for mapping.
+        max_tan_pitch ≈ tan(max_allowed_pitch_angle)
+        """
+        try:
+            orientation = self.getSelf().getOrientation()
+
+            # Pitch (rotation around Y axis)
+            pitch = np.arctan2(-orientation[6], orientation[8])
+
+            # Use tan(pitch) as geometric validity criterion
+            return abs(np.tan(pitch)) < max_tan_pitch
+
+        except Exception:
+            return False
+            
