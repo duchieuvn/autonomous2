@@ -537,10 +537,10 @@ class GridMap():
                 if isinstance(col_data, tuple) and len(col_data) >= 3:
                     x, y, color = col_data[0], col_data[1], col_data[2]
                     # Draw filled circle for estimated column
-                    self._draw_point(x, y, color=color, radius=8)
+                    self._draw_point(x, y, color=color, radius=6)
                     # Draw circle outline for clarity
-                    screen_x, screen_y = self._map_to_screen(x, y)
-                    pygame.draw.circle(self.pygame_screen, (255, 255, 255), (screen_x, screen_y), 8, 2)
+                    # screen_x, screen_y = self._map_to_screen(x, y)
+                    # pygame.draw.circle(self.pygame_screen, (255, 255, 255), (screen_x, screen_y), 8, 2)
             
             # Draw robot last (on top) to ensure visibility
             if robot_pos:

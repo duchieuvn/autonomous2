@@ -130,6 +130,8 @@ class MyRobot(Supervisor):
                             elif color == 'yellow' and self.end_point is not None:
                                 continue
 
+                            print(f"-----Detected {color} column")
+
                             update_count = self.blue_pos_update_count if color == 'blue' else self.yellow_pos_update_count
                             self.camera_detection_signal = ('column', color)
                             column_mask = utils.segment_color(self.get_hsv_image(), color)
@@ -140,16 +142,14 @@ class MyRobot(Supervisor):
                                 print(f"Column {color} is close", column_distance)
                                 self.mark_column(color)
                                 self.turn_right_milisecond(600)
-
-                            # Gate: only execute this block max 3 times per color
+                                                        # Gate: only execute this block max 3 times per color
                             elif update_count < 3:
                                 self.center_column_in_view(color)
                                 ratio = self.get_column_center_ratio(color)
-                                print("----column ratio:", ratio)
                                 if ratio > 0.15:
                                     column_distance = self.estimate_column_distance(color) 
-                                    print("----column distance:", column_distance)
-                                    if column_distance is not None and column_distance > 0:
+                                    time.sleep(3)
+                                    if column_distance is not None:
                                         column_position = self.position_ahead(column_distance / 100) 
                                         column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
                                         self.update_column_estimation(color, column_map_position)
@@ -197,12 +197,22 @@ class MyRobot(Supervisor):
         last_position = self.get_position()
         while self.stuck_thread_running:
             with self.stuck_lock:  
-                time.sleep(4)
-                if self.robot_stuck(last_position, stuck_distance=0.07):
-                    self.stuck_signal = True
+                time.sleep(2)
+                # Check if motors are running (any motor has non-zero velocity)
+                motor_velocities = [motor.getVelocity() for motor in self.motors.values()]
+                is_moving = any(abs(v) > 0.01 for v in motor_velocities)  # Small threshold to account for floating point
+                
+                if is_moving:
+                    # Only check for stuck condition when motors are running
+                    if self.robot_stuck(last_position, stuck_distance=0.07):
+                        self.stuck_signal = True
+                    else:
+                        self.stuck_signal = False
+                    last_position = self.get_position()
                 else:
+                    # Motors not running, don't flag as stuck and reset reference position
                     self.stuck_signal = False
-                last_position = self.get_position()                              
+                    last_position = self.get_position()                              
     
     def get_column_center_ratio(self, color):
         hsv_img = self.get_hsv_image()
@@ -217,10 +227,11 @@ class MyRobot(Supervisor):
         return ratio
         
     def column_close(self, column_mask):
+        print("Checking column closeness...")
         nonzero_pixels = np.count_nonzero(column_mask)
         ratio = nonzero_pixels / (column_mask.shape[0] * column_mask.shape[1])
         # If the column occupies more than 40% of the image -> close
-        if ratio > 0.34:
+        if ratio > 0.3:
             return True
         else:
             return False
@@ -780,11 +791,9 @@ class MyRobot(Supervisor):
             if chosen_frontier is None:
                 if random.random() < 0.35:
                     chosen_frontier = self.select_frontier_target(frontier_regions)
-                    print(count, "Nearest frontier---")
                     self.chosen_frontier_count += 1
                 else:
                     chosen_frontier = self.select_frontier_target2(frontier_regions)
-                    print(count, "Random frontier---")
                     self.chosen_frontier_count = 0
 
             if chosen_frontier:
