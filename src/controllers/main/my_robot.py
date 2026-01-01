@@ -5,7 +5,6 @@ import cv2
 import random
 import os
 import sys
-from vis import MapVisualizer
 import pygame
 import time
 import utils
@@ -124,40 +123,40 @@ class MyRobot(Supervisor):
                             continue
 
                         # Check for columns
-                        color = self.detect_column()
-                        if color:
-                            if color == 'blue' and self.start_point is not None:
-                                continue
-                            elif color == 'yellow' and self.end_point is not None:
-                                continue
+                        # color = self.detect_column()
+                        # if color:
+                        #     if color == 'blue' and self.start_point is not None:
+                        #         continue
+                        #     elif color == 'yellow' and self.end_point is not None:
+                        #         continue
 
-                            update_count = self.blue_pos_update_count if color == 'blue' else self.yellow_pos_update_count
-                            self.camera_detection_signal = ('column', color)
-                            column_mask = utils.segment_color(self.get_hsv_image(), color)
-                            column_distance = self.estimate_column_distance(color) 
+                        #     update_count = self.blue_pos_update_count if color == 'blue' else self.yellow_pos_update_count
+                        #     self.camera_detection_signal = ('column', color)
+                        #     column_mask = utils.segment_color(self.get_hsv_image(), color)
+                        #     column_distance = self.estimate_column_distance(color) 
                             
-                            if self.column_close(column_mask, column_distance):
-                                self.center_column_in_view(color)
-                                print(f"Column {color} is close", column_distance)
-                                self.mark_column(color)
-                                self.turn_right_milisecond(600)
+                        #     if self.column_close(column_mask, column_distance):
+                        #         self.center_column_in_view(color)
+                        #         print(f"Column {color} is close", column_distance)
+                        #         self.mark_column(color)
+                        #         self.turn_right_milisecond(600)
 
-                            # Gate: only execute this block max 3 times per color
-                            elif update_count < 3:
-                                self.center_column_in_view(color)
-                                column_distance = self.estimate_column_distance(color) 
-                                if column_distance is not None:
-                                    column_position = self.position_ahead(column_distance / 100) 
-                                    column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
-                                    self.update_column_estimation(color, column_map_position)
-                                    print(f"Marked {color} is far", column_distance)
+                        #     # Gate: only execute this block max 3 times per color
+                        #     elif update_count < 3:
+                        #         self.center_column_in_view(color)
+                        #         column_distance = self.estimate_column_distance(color) 
+                        #         if column_distance is not None:
+                        #             column_position = self.position_ahead(column_distance / 100) 
+                        #             column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
+                        #             self.update_column_estimation(color, column_map_position)
+                        #             print(f"Marked {color} is far", column_distance)
                                     
-                                    if color == 'blue':
-                                        self.map_object.update_map_point(column_map_position, value=BLUE_COLUMN)
-                                        self.blue_pos_update_count += 1
-                                    elif color == 'yellow':
-                                        self.map_object.update_map_point(column_map_position, value=YELLOW_COLUMN)
-                                        self.yellow_pos_update_count += 1
+                        #             if color == 'blue':
+                        #                 self.map_object.update_map_point(column_map_position, value=BLUE_COLUMN)
+                        #                 self.blue_pos_update_count += 1
+                        #             elif color == 'yellow':
+                        #                 self.map_object.update_map_point(column_map_position, value=YELLOW_COLUMN)
+                        #                 self.yellow_pos_update_count += 1
                                 
                 time.sleep(0.5)  # Check every 500ms
 
@@ -181,7 +180,7 @@ class MyRobot(Supervisor):
                 if not self.is_turning():
                     with self.lidar_lock:
                         self.stop_motor()
-                        self.step(self.time_step)
+                        # self.step(self.time_step)
                         time.sleep(0.1)  # Allow robot to stabilize
                         self.lidar_update_map()
                 time.sleep(0.5)  # Update at same frequency as before
@@ -190,6 +189,19 @@ class MyRobot(Supervisor):
                 print(f"[Lidar] Error in lidar update loop: {e}")
                 time.sleep(1.0)
 
+    def stuck_detection_loop(self):
+        """Continuous stuck detection loop."""
+        # Wait for sensors to initialize
+        time.sleep(1.0)
+        last_position = self.get_position()
+        while self.stuck_thread_running:
+            with self.stuck_lock:  
+                time.sleep(4)
+                if self.robot_stuck(last_position, stuck_distance=0.1):
+                    self.stuck_signal = True
+                else:
+                    self.stuck_signal = False
+                last_position = self.get_position()                              
     def column_close(self, column_mask, column_distance):
         nonzero_pixels = np.count_nonzero(column_mask)
         ratio = nonzero_pixels / (column_mask.shape[0] * column_mask.shape[1])
@@ -736,7 +748,7 @@ class MyRobot(Supervisor):
             return True
         return False
 
-    def handle_frontier_exploration(self, count, map_diff, vis):
+    def handle_frontier_exploration(self, count, map_diff):
         frontier_regions = []
         chosen_frontier = None
         path_to_frontier = None
@@ -760,7 +772,7 @@ class MyRobot(Supervisor):
             if chosen_frontier:
                 path_to_frontier = self.map_object.find_path_for_frontier(self.get_map_position(), chosen_frontier)
                 if path_to_frontier:
-                    self.frontier_following(path_to_frontier, vis)
+                    self.frontier_following(path_to_frontier)
 
         return frontier_regions, chosen_frontier, path_to_frontier
     
@@ -796,18 +808,19 @@ class MyRobot(Supervisor):
 
         TODO:
         - improve column distance estimation (far or close)
-        - Stop when both columns found
         - Path following from start to end in another function
         '''
 
         # Start continuous detection and lidar threads before any setup
         self.start_camera_thread()
         self.start_lidar_thread()
+        self.start_stuck_thread()
 
         map_object = self.map_object
-        vis = None
+        
+        # Start visualization in separate thread
         if debug:
-            vis = MapVisualizer()
+            map_object.start_visualization()
 
         count = 0
         chosen_frontier = None  # store the currently selected frontier
@@ -819,10 +832,6 @@ class MyRobot(Supervisor):
         last_position = self.get_position()
 
         while self.step(self.time_step) != -1 and not self.found_all_2_columns():
-            if debug:
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:
-                        exit()
 
             # Check for camera detection signals from background thread
             with self.detection_lock:
@@ -831,7 +840,7 @@ class MyRobot(Supervisor):
                     self.camera_detection_signal = None  # Reset signal to allow camera thread to set new ones
 
                     if signal == 'red_wall':
-                        self.mark_closure_block()
+                        # self.mark_closure_block()
                         self.align_to_red_wall()
                         # print('Done align to red wall')
                         random_duration = random.randint(700, 900)
@@ -848,79 +857,37 @@ class MyRobot(Supervisor):
                 last_position = self.get_position()
 
             map_diff = utils.percentage_map_differences(previous_map, map_object.grid_map)
-            frontier_regions, chosen_frontier, path_to_frontier = self.handle_frontier_exploration(count, map_diff, vis)
+            frontier_regions, chosen_frontier, path_to_frontier = self.handle_frontier_exploration(count, map_diff)
 
             previous_map = map_object.grid_map.copy()
 
             if debug:
-                display_map = map_object.grid_map.copy()
-                frontier_overlay_points = []
-
-                # Color frontier regions based on their size
-                if len(frontier_regions):
-                    region_sizes = [len(region) for region in frontier_regions]
-
-                    if region_sizes:
-                        min_size = min(region_sizes)
-                        max_size = max(region_sizes)
-                        size_range = max_size - min_size if max_size > min_size else 1
-
-                        frontier_color_lookup = {
-                            FRONTIER_VISUALIZATION_COLOR_SMALL: (0, 0, 100),      # blue
-                            FRONTIER_VISUALIZATION_COLOR_MEDIUM: (0, 200, 155),    # cyan
-                            FRONTIER_VISUALIZATION_COLOR_LARGE: (100, 100, 0),     # yellow
-                            FRONTIER_VISUALIZATION_COLOR_LARGEST: (100, 0, 0),     # red
-                        }
-
-                        for region in frontier_regions:
-                            region_size = len(region)
-                            size_normalized = (region_size - min_size) / size_range if size_range > 0 else 0
-
-                            if size_normalized < 0.33:
-                                color_value = FRONTIER_VISUALIZATION_COLOR_SMALL
-                            elif size_normalized < 0.66:
-                                color_value = FRONTIER_VISUALIZATION_COLOR_MEDIUM
-                            elif size_normalized < 0.95:
-                                color_value = FRONTIER_VISUALIZATION_COLOR_LARGE
-                            else:
-                                color_value = FRONTIER_VISUALIZATION_COLOR_LARGEST
-
-                            rgb = frontier_color_lookup.get(color_value, (255, 0, 0))
-
-                            # Apply color to all cells in the region
-                            for x, y in region:
-                                if 0 <= x < MAP_SIZE and 0 <= y < MAP_SIZE:
-                                    display_map[y, x] = color_value
-                                    frontier_overlay_points.append((x, y, rgb))
-
-                vis.display(display_map)
-
-                # Draw frontier overlays with explicit colors to avoid color-map conflicts
-                for fx, fy, fcolor in frontier_overlay_points:
-                    vis.draw_point(fx, fy, color=fcolor, radius=2)
-
-                if path_to_frontier:
-                    vis.draw_path(path_to_frontier)
-
-                rx, ry = self.get_map_position()
-                vis.draw_point(rx, ry, color=(0, 0, 255), radius=5)
-                if chosen_frontier:
-                    vis.draw_point(chosen_frontier[0], chosen_frontier[1], color=(255, 0, 0), radius=5)
-                
-                # Draw start and end points if found
-                if self.blue_estimated_pos is not None:
-                    vis.draw_point(int(self.blue_estimated_pos[0]), int(self.blue_estimated_pos[1]), color=(0, 255, 255), radius=7)
-                if self.yellow_estimated_pos is not None:
-                    vis.draw_point(int(self.yellow_estimated_pos[0]), int(self.yellow_estimated_pos[1]), color=(255, 255, 0), radius=7)
-                
-                pygame.display.flip()
+                # Update GridMap state for visualization thread
+                with map_object.vis_lock:
+                    rx, ry = self.get_map_position()
+                    map_object.robot_position = (rx, ry)
+                    map_object.current_path = path_to_frontier
+                    map_object.target_position = chosen_frontier
+                    
+                    # Update column points for visualization
+                    column_points = []
+                    if self.blue_estimated_pos is not None:
+                        column_points.append((int(self.blue_estimated_pos[0]), int(self.blue_estimated_pos[1]), (0, 255, 255)))
+                    if self.yellow_estimated_pos is not None:
+                        column_points.append((int(self.yellow_estimated_pos[0]), int(self.yellow_estimated_pos[1]), (255, 255, 0)))
+                    map_object.column_points = column_points
 
             count += 1
 
         # Clean up detection and lidar threads
         self.stop_camera_thread()
         self.stop_lidar_thread()
+        self.stop_stuck_thread()
         self.stop_motor()
+        
+        if debug:
+            map_object.stop_visualization()
+        
         print("Exploration completed.")
         return self.path
 
@@ -1016,28 +983,17 @@ class MyRobot(Supervisor):
         self.stop_motor()
         return True
 
-    def frontier_following(self, path, vis=None):
+    def frontier_following(self, path):
         for target in path[5::5]:
             while self.step() != -1 and self.camera_detection_signal is None:
-                for event in pygame.event.get(): 
-                    if event.type == pygame.QUIT:
-                        exit()
-
-                if vis:
-                    vis.display(self.map_object.grid_map)
-                    vis.draw_path(path)
+                # Update GridMap state for visualization
+                with self.map_object.vis_lock:
                     rx, ry = self.get_map_position()
-                    vis.draw_point(rx, ry, color=(0, 0, 255), radius=5)
-                    vis.draw_point(target[0], target[1], color=(0, 255, 0), radius=3)
-                    pygame.display.flip()
+                    self.map_object.robot_position = (rx, ry)
+                    self.map_object.current_path = path
+                    self.map_object.target_position = target
 
-                # Get front distance to wall for monitoring
-                front_distance = self.get_min_front_distance()
-                
-                # --- Check for wall blocking the path ---
-                wall_threshold = 0.04  # meters (20cm) - wall very close
-                if front_distance < wall_threshold:
-                    print(f'-----Wall detected at {front_distance:.2f}')
+                if self.stuck_signal or np.mean(self.get_distances()) < 0.05:
                     self.stop_motor()
                     self.recover_from_stuck()
                     return
@@ -1047,15 +1003,11 @@ class MyRobot(Supervisor):
         self.stop_motor()
 
 
-    def path_following_pipeline(self, path, vis=None, frontier_target=None):
-        """Follow a path. If a Visualizer `vis` is provided, reuse it to avoid recreating
-        the Pygame window (which causes flicker). If not provided, create one once.
+    def path_following_pipeline(self, path, frontier_target=None):
+        """Follow a path with visualization through GridMap state.
         
-        Shows the path overlaid on the occupancy grid map.
+        Shows the path overlaid on the occupancy grid map via the visualization thread.
         """
-        # if vis is None:
-        #     vis = Visualizer()
-        
         # Smooth the path using spline A* to get smoother waypoints
         try:
             from astar_2_spline import runAStarSearch as runAStarSearchSpline
@@ -1087,22 +1039,18 @@ class MyRobot(Supervisor):
         for idx, target in enumerate(sampled_targets):
             stuck_counter = 0  # Reset stuck counter for each target
             while self.step() != -1:
-                for event in pygame.event.get(): 
-                    if event.type == pygame.QUIT:
-                        exit()
-                
                 # Get front distance to wall for monitoring
                 front_distance = self.get_min_front_distance()
 
-                if vis:
-                    vis.display(self.map_object.grid_map, path)
-                    if frontier_target:
-                        vis.draw_point(frontier_target[0], frontier_target[1], color=(0, 200, 255), radius=5)
-                    
+                # Update GridMap state for visualization
+                with self.map_object.vis_lock:
                     rx, ry = self.get_map_position()
-                    vis.draw_point(rx, ry, color=(0, 0, 255), radius=5)
-                    vis.draw_point(target[0], target[1], color=(0, 255, 0), radius=3)
-                    pygame.display.flip()
+                    self.map_object.robot_position = (rx, ry)
+                    self.map_object.current_path = path
+                    self.map_object.target_position = target
+                    if frontier_target:
+                        # Add frontier target as a special column point
+                        self.map_object.column_points = [(frontier_target[0], frontier_target[1], (0, 200, 255))]
                 
                 # --- Check for wall blocking the path before stuck detection ---
                 wall_threshold = 0.2  # meters (20cm) - wall very close

@@ -6,7 +6,9 @@ from collections import deque
 from astar_clearance import runAStarSearch  # NEW: Clearance-aware A* with tunable hyperparameters
 from astar_2_spline import runAStarSearch as runAStarSearchSpline
 from astar_standard import runAStarSearch as runAStarSearch2Spline
-import random 
+import random
+import pygame
+import threading 
 
 class GridMap():
     """Encapsulates grid map management including occupancy grid, log-odds mapping, frontier detection, and pathfinding."""
@@ -24,6 +26,31 @@ class GridMap():
         self.grid_map = np.full((self.map_size, self.map_size), UNKNOWN, dtype=np.uint8)
         self.frontier_regions = []
         self.visited_frontiers = []
+        
+        # Visualization state
+        self.current_path = None
+        self.robot_position = None
+        self.target_position = None
+        self.column_points = []
+        self.pygame_screen = None
+        self.window_size = (800, 800)
+        self.should_stop_visualization = False
+        self.visualization_thread = None
+        self.vis_lock = threading.Lock()
+        self.clock = None
+        self.color_map = {
+            0: (255, 255, 255),   # freespace: white
+            1: (0, 0, 0),         # obstacle: black
+            255: (80, 80, 80),    # unknown: gray
+            100: (0, 255, 0),     # start: green
+            150: (0, 0, 255),     # end: blue
+            180: (0, 255, 255),   # frontier generic: cyan
+            50: (0, 0, 255),      # small frontier: blue
+            101: (0, 255, 255),   # medium frontier: cyan
+            200: (255, 255, 0),   # large frontier: yellow
+            220: (255, 0, 0),     # largest frontier: red
+            CLOSED: (128, 0, 128),  # closed area: purple
+        }
 
     def there_is_obstacle(self, map_target):
         """Check if a map target contains an obstacle."""
@@ -350,4 +377,194 @@ class GridMap():
         points_map = points_scaled + t_map
 
         return points_map.astype(np.int32)
+
+    # ========== VISUALIZATION METHODS ==========
+    
+    def _init_pygame(self):
+        """Initialize pygame display for visualization."""
+        pygame.init()
+        self.pygame_screen = pygame.display.set_mode(self.window_size)
+        pygame.display.set_caption("Grid Map Visualizer - Live")
+        self.clock = pygame.time.Clock()
+    
+    def _grid_to_display(self, grid_map):
+        """Convert grid map to RGB display image using color_map.
+        
+        Args:
+            grid_map: 2D numpy array with grid values
+            
+        Returns:
+            RGB image (height, width, 3) for display
+        """
+        h, w = grid_map.shape
+        display = np.zeros((h, w, 3), dtype=np.uint8)
+        
+        # Map each grid value to color
+        for value, rgb in self.color_map.items():
+            mask = grid_map == value
+            display[mask] = rgb
+        
+        # Handle unmapped values as black
+        mapped_mask = np.zeros((h, w), dtype=bool)
+        for value in self.color_map.keys():
+            mapped_mask |= (grid_map == value)
+        display[~mapped_mask] = (0, 0, 0)
+        
+        return display
+    
+    def _map_to_screen(self, map_x, map_y):
+        """Convert map coordinates to screen coordinates."""
+        screen_x = int(map_x * self.window_size[0] / self.map_size)
+        screen_y = int(map_y * self.window_size[1] / self.map_size)
+        return screen_x, screen_y
+    
+    def _draw_path(self, path, color=(255, 0, 0), thickness=2):
+        """Draw a path on screen.
+        
+        Args:
+            path: List of (x, y) map coordinates
+            color: RGB tuple for path color
+            thickness: Line thickness in pixels
+        """
+        if not path or len(path) < 2:
+            return
+        scaled_path = [self._map_to_screen(x, y) for x, y in path]
+        for i in range(len(scaled_path) - 1):
+            pygame.draw.line(self.pygame_screen, color, scaled_path[i], scaled_path[i + 1], thickness)
+    
+    def _draw_point(self, map_x, map_y, color=(0, 255, 0), radius=5):
+        """Draw a single point on screen.
+        
+        Args:
+            map_x, map_y: Map coordinates
+            color: RGB tuple for point color
+            radius: Circle radius in pixels
+        """
+        if map_x is None or map_y is None:
+            return
+        screen_x, screen_y = self._map_to_screen(map_x, map_y)
+        pygame.draw.circle(self.pygame_screen, color, (screen_x, screen_y), radius)
+    
+    def _draw_frontier_regions(self, display_map):
+        """Draw frontier regions colored by size on the display map.
+        
+        Modifies display_map in place to color frontier cells.
+        """
+        if not self.frontier_regions:
+            return
+        
+        # Sort frontier regions by size
+        sorted_regions = sorted(self.frontier_regions, key=lambda r: len(r))
+        n_regions = len(sorted_regions)
+        
+        if n_regions == 0:
+            return
+        
+        # Color frontiers by size gradient
+        for idx, region in enumerate(sorted_regions):
+            if n_regions == 1:
+                color_value = 101  # medium cyan
+            elif idx == 0:
+                color_value = 50   # smallest: blue
+            elif idx == n_regions - 1:
+                color_value = 220  # largest: red
+            elif idx < n_regions / 2:
+                color_value = 101  # medium: cyan
+            else:
+                color_value = 200  # large: yellow
+            
+            for x, y in region:
+                if 0 <= x < self.map_size and 0 <= y < self.map_size:
+                    display_map[y, x] = color_value
+    
+    def _draw_columns(self):
+        """Draw detected column points."""
+        if not self.column_points:
+            return
+        
+        for col_data in self.column_points:
+            if isinstance(col_data, tuple) and len(col_data) >= 3:
+                x, y, color = col_data[0], col_data[1], col_data[2]
+                self._draw_point(x, y, color=color, radius=2)
+            elif isinstance(col_data, (list, tuple)) and len(col_data) >= 2:
+                x, y = col_data[0], col_data[1]
+                self._draw_point(x, y, color=(0, 255, 255), radius=2)
+    
+    def run_visualization_loop(self):
+        """Main visualization loop that continuously displays map state.
+        
+        Runs independently in a separate thread, polling GridMap state and
+        rendering all elements (grid, frontiers, paths, robot, targets, columns).
+        """
+        self._init_pygame()
+        
+        while not self.should_stop_visualization:
+            # Handle pygame events
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self.should_stop_visualization = True
+                    break
+            
+            # Acquire lock for thread-safe reading
+            with self.vis_lock:
+                # Create display map with frontier regions
+                display_map = self.grid_map.copy()
+                self._draw_frontier_regions(display_map)
+                
+                # Convert to RGB image
+                display_img = self._grid_to_display(display_map)
+                
+                # Copy path and positions for rendering
+                current_path = self.current_path
+                robot_pos = self.robot_position
+                target_pos = self.target_position
+                columns = self.column_points.copy() if self.column_points else []
+            
+            # Resize and blit to screen
+            resized = cv2.resize(display_img, self.window_size, interpolation=cv2.INTER_NEAREST)
+            surface = pygame.surfarray.make_surface(np.transpose(resized, (1, 0, 2)))
+            self.pygame_screen.blit(surface, (0, 0))
+            
+            # Draw overlays
+            if current_path:
+                self._draw_path(current_path, color=(255, 0, 0), thickness=2)
+            
+            if robot_pos:
+                self._draw_point(robot_pos[0], robot_pos[1], color=(0, 0, 255), radius=5)
+            
+            if target_pos:
+                self._draw_point(target_pos[0], target_pos[1], color=(0, 255, 0), radius=3)
+            
+            # Draw columns
+            for col_data in columns:
+                if isinstance(col_data, tuple) and len(col_data) >= 3:
+                    x, y, color = col_data[0], col_data[1], col_data[2]
+                    self._draw_point(x, y, color=color, radius=2)
+                elif isinstance(col_data, (list, tuple)) and len(col_data) >= 2:
+                    x, y = col_data[0], col_data[1]
+                    self._draw_point(x, y, color=(0, 255, 255), radius=2)
+            
+            # Update display
+            pygame.display.flip()
+            
+            # Limit to 30 FPS
+            self.clock.tick(30)
+        
+        # Cleanup
+        pygame.quit()
+    
+    def start_visualization(self):
+        """Start the visualization loop in a separate daemon thread."""
+        if self.visualization_thread is None or not self.visualization_thread.is_alive():
+            self.should_stop_visualization = False
+            self.visualization_thread = threading.Thread(target=self.run_visualization_loop, daemon=True)
+            self.visualization_thread.start()
+            print("[info] Visualization thread started")
+    
+    def stop_visualization(self):
+        """Stop the visualization loop gracefully."""
+        self.should_stop_visualization = True
+        if self.visualization_thread and self.visualization_thread.is_alive():
+            self.visualization_thread.join(timeout=2.0)
+            print("[info] Visualization thread stopped")
   
