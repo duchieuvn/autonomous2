@@ -123,41 +123,42 @@ class MyRobot(Supervisor):
                             continue
 
                         # Check for columns
-                        # color = self.detect_column()
-                        # if color:
-                        #     if color == 'blue' and self.start_point is not None:
-                        #         continue
-                        #     elif color == 'yellow' and self.end_point is not None:
-                        #         continue
+                        color = self.detect_column()
+                        if color:
+                            if color == 'blue' and self.start_point is not None:
+                                continue
+                            elif color == 'yellow' and self.end_point is not None:
+                                continue
 
-                        #     update_count = self.blue_pos_update_count if color == 'blue' else self.yellow_pos_update_count
-                        #     self.camera_detection_signal = ('column', color)
-                        #     column_mask = utils.segment_color(self.get_hsv_image(), color)
-                        #     column_distance = self.estimate_column_distance(color) 
+                            update_count = self.blue_pos_update_count if color == 'blue' else self.yellow_pos_update_count
+                            self.camera_detection_signal = ('column', color)
+                            column_mask = utils.segment_color(self.get_hsv_image(), color)
+                            column_distance = self.estimate_column_distance(color) 
                             
-                        #     if self.column_close(column_mask, column_distance):
-                        #         self.center_column_in_view(color)
-                        #         print(f"Column {color} is close", column_distance)
-                        #         self.mark_column(color)
-                        #         self.turn_right_milisecond(600)
+                            if self.column_close(column_mask):
+                                self.center_column_in_view(color)
+                                print(f"Column {color} is close", column_distance)
+                                self.mark_column(color)
+                                self.turn_right_milisecond(600)
 
-                        #     # Gate: only execute this block max 3 times per color
-                        #     elif update_count < 3:
-                        #         self.center_column_in_view(color)
-                        #         column_distance = self.estimate_column_distance(color) 
-                        #         if column_distance is not None:
-                        #             column_position = self.position_ahead(column_distance / 100) 
-                        #             column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
-                        #             self.update_column_estimation(color, column_map_position)
-                        #             print(f"Marked {color} is far", column_distance)
+                            # Gate: only execute this block max 3 times per color
+                            elif update_count < 3:
+                                self.center_column_in_view(color)
+                                ratio = self.get_column_center_ratio(color)
+                                print("----column ratio:", ratio)
+                                if ratio > 0.15:
+                                    column_distance = self.estimate_column_distance(color) 
+                                    print("----column distance:", column_distance)
+                                    if column_distance is not None and column_distance > 0:
+                                        column_position = self.position_ahead(column_distance / 100) 
+                                        column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
+                                        self.update_column_estimation(color, column_map_position)
+                                        print(f"Updated {color} column position")
+                                        if color == 'blue':
+                                            self.blue_pos_update_count += 1
+                                        elif color == 'yellow':
+                                            self.yellow_pos_update_count += 1
                                     
-                        #             if color == 'blue':
-                        #                 self.map_object.update_map_point(column_map_position, value=BLUE_COLUMN)
-                        #                 self.blue_pos_update_count += 1
-                        #             elif color == 'yellow':
-                        #                 self.map_object.update_map_point(column_map_position, value=YELLOW_COLUMN)
-                        #                 self.yellow_pos_update_count += 1
-                                
                 time.sleep(0.5)  # Check every 500ms
 
             except Exception as e:
@@ -197,12 +198,25 @@ class MyRobot(Supervisor):
         while self.stuck_thread_running:
             with self.stuck_lock:  
                 time.sleep(4)
-                if self.robot_stuck(last_position, stuck_distance=0.1):
+                if self.robot_stuck(last_position, stuck_distance=0.07):
                     self.stuck_signal = True
                 else:
                     self.stuck_signal = False
                 last_position = self.get_position()                              
-    def column_close(self, column_mask, column_distance):
+    
+    def get_column_center_ratio(self, color):
+        hsv_img = self.get_hsv_image()
+        if hsv_img is None:
+            return 0.0
+        
+        center_frame = hsv_img[:, hsv_img.shape[1]//3: 2*hsv_img.shape[1]//3]
+
+        column_mask = utils.segment_color(center_frame, color)
+        nonzero_pixels = np.count_nonzero(column_mask)
+        ratio = nonzero_pixels / (column_mask.shape[0] * column_mask.shape[1])
+        return ratio
+        
+    def column_close(self, column_mask):
         nonzero_pixels = np.count_nonzero(column_mask)
         ratio = nonzero_pixels / (column_mask.shape[0] * column_mask.shape[1])
         # If the column occupies more than 40% of the image -> close
@@ -635,6 +649,7 @@ class MyRobot(Supervisor):
         # Segment column in image
         column_mask = utils.segment_color(hsv_img, color)
         if not np.any(column_mask):
+            print(f"[Error] No {color} column detected in image.")
             return None
         
         # Extract valid depth values (filter out -1 sentinel)
@@ -642,6 +657,7 @@ class MyRobot(Supervisor):
         valid_depths = depth_values[depth_values > 0]
         
         if len(valid_depths) == 0:
+            print("Invalid depth")
             return None
         
         # Calculate horizontal distance using Pythagorean theorem
@@ -649,7 +665,7 @@ class MyRobot(Supervisor):
         column_height_cm = 125.0
         
         if max_depth_cm <= column_height_cm:
-            return None
+            return np.mean(valid_depths)  # Fallback to average depth if max is too small
         
         horizontal_distance_cm = np.sqrt(max_depth_cm ** 2 - column_height_cm ** 2)
         return horizontal_distance_cm 
@@ -762,11 +778,13 @@ class MyRobot(Supervisor):
 
             # Fallback to existing selection logic if none chosen
             if chosen_frontier is None:
-                if self.chosen_frontier_count < EXPLORATION_MAP_UPDATE_FREQ:
+                if random.random() < 0.35:
                     chosen_frontier = self.select_frontier_target(frontier_regions)
+                    print(count, "Nearest frontier---")
                     self.chosen_frontier_count += 1
                 else:
                     chosen_frontier = self.select_frontier_target2(frontier_regions)
+                    print(count, "Random frontier---")
                     self.chosen_frontier_count = 0
 
             if chosen_frontier:
@@ -851,10 +869,10 @@ class MyRobot(Supervisor):
             #     self.adapt_direction()
             #     self.set_robot_velocity(MOTOR_VELOCITY_FORWARD, MOTOR_VELOCITY_FORWARD)
                 
-            if count > 1000 and count % 50 == 0:
-                if self.robot_stuck(last_position, stuck_distance=0.16):
-                    self.recover_from_stuck(turn_duration=(700, 900))
-                last_position = self.get_position()
+            # if count > 1000 and count % 50 == 0:
+            #     if self.robot_stuck(last_position, stuck_distance=0.16):
+            #         self.recover_from_stuck(turn_duration=(700, 900))
+            #     last_position = self.get_position()
 
             map_diff = utils.percentage_map_differences(previous_map, map_object.grid_map)
             frontier_regions, chosen_frontier, path_to_frontier = self.handle_frontier_exploration(count, map_diff)

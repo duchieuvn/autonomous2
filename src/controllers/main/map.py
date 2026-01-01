@@ -39,11 +39,11 @@ class GridMap():
         self.vis_lock = threading.Lock()
         self.clock = None
         self.color_map = {
-            0: (255, 255, 255),   # freespace: white
-            1: (0, 0, 0),         # obstacle: black
-            255: (80, 80, 80),    # unknown: gray
-            100: (0, 255, 0),     # start: green
-            150: (0, 0, 255),     # end: blue
+            FREESPACE: (255, 255, 255),   # freespace: white
+            OBSTACLE: (0, 0, 0),         # obstacle: black
+            UNKNOWN: (80, 80, 80),    # unknown: gray
+            BLUE_COLUMN: (0, 0, 255),     # start: blue
+            YELLOW_COLUMN: (255, 255, 0),     # end: yellow
             180: (0, 255, 255),   # frontier generic: cyan
             50: (0, 0, 255),      # small frontier: blue
             101: (0, 255, 255),   # medium frontier: cyan
@@ -485,10 +485,10 @@ class GridMap():
         for col_data in self.column_points:
             if isinstance(col_data, tuple) and len(col_data) >= 3:
                 x, y, color = col_data[0], col_data[1], col_data[2]
-                self._draw_point(x, y, color=color, radius=2)
+                self._draw_point(x, y, color=color, radius=5)
             elif isinstance(col_data, (list, tuple)) and len(col_data) >= 2:
                 x, y = col_data[0], col_data[1]
-                self._draw_point(x, y, color=(0, 255, 255), radius=2)
+                self._draw_point(x, y, color=(0, 255, 255), radius=5)
     
     def run_visualization_loop(self):
         """Main visualization loop that continuously displays map state.
@@ -525,24 +525,26 @@ class GridMap():
             surface = pygame.surfarray.make_surface(np.transpose(resized, (1, 0, 2)))
             self.pygame_screen.blit(surface, (0, 0))
             
-            # Draw overlays
+            # Draw overlays in order (path -> target -> columns -> robot)
             if current_path:
                 self._draw_path(current_path, color=(255, 0, 0), thickness=2)
             
-            if robot_pos:
-                self._draw_point(robot_pos[0], robot_pos[1], color=(0, 0, 255), radius=5)
-            
             if target_pos:
-                self._draw_point(target_pos[0], target_pos[1], color=(0, 255, 0), radius=3)
+                self._draw_point(target_pos[0], target_pos[1], color=(0, 255, 0), radius=4)
             
-            # Draw columns
+            # Draw estimated columns with distinct colors and larger radius
             for col_data in columns:
                 if isinstance(col_data, tuple) and len(col_data) >= 3:
                     x, y, color = col_data[0], col_data[1], col_data[2]
-                    self._draw_point(x, y, color=color, radius=2)
-                elif isinstance(col_data, (list, tuple)) and len(col_data) >= 2:
-                    x, y = col_data[0], col_data[1]
-                    self._draw_point(x, y, color=(0, 255, 255), radius=2)
+                    # Draw filled circle for estimated column
+                    self._draw_point(x, y, color=color, radius=8)
+                    # Draw circle outline for clarity
+                    screen_x, screen_y = self._map_to_screen(x, y)
+                    pygame.draw.circle(self.pygame_screen, (255, 255, 255), (screen_x, screen_y), 8, 2)
+            
+            # Draw robot last (on top) to ensure visibility
+            if robot_pos:
+                self._draw_point(robot_pos[0], robot_pos[1], color=(0, 0, 255), radius=6)
             
             # Update display
             pygame.display.flip()
