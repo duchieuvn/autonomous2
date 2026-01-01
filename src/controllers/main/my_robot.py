@@ -126,6 +126,11 @@ class MyRobot(Supervisor):
                         # Check for columns
                         color = self.detect_column()
                         if color:
+                            if color == 'blue' and self.start_point is not None:
+                                continue
+                            elif color == 'yellow' and self.end_point is not None:
+                                continue
+
                             update_count = self.blue_pos_update_count if color == 'blue' else self.yellow_pos_update_count
                             self.camera_detection_signal = ('column', color)
                             column_mask = utils.segment_color(self.get_hsv_image(), color)
@@ -133,8 +138,9 @@ class MyRobot(Supervisor):
                             
                             if self.column_close(column_mask, column_distance):
                                 self.center_column_in_view(color)
-                                print("Column is close", column_distance)
+                                print(f"Column {color} is close", column_distance)
                                 self.mark_column(color)
+                                self.turn_right_milisecond(600)
 
                             # Gate: only execute this block max 3 times per color
                             elif update_count < 3:
@@ -144,6 +150,7 @@ class MyRobot(Supervisor):
                                     column_position = self.position_ahead(column_distance / 100) 
                                     column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
                                     self.update_column_estimation(color, column_map_position)
+                                    print(f"Marked {color} is far", column_distance)
                                     
                                     if color == 'blue':
                                         self.map_object.update_map_point(column_map_position, value=BLUE_COLUMN)
@@ -186,7 +193,6 @@ class MyRobot(Supervisor):
     def column_close(self, column_mask, column_distance):
         nonzero_pixels = np.count_nonzero(column_mask)
         ratio = nonzero_pixels / (column_mask.shape[0] * column_mask.shape[1])
-        print("----Column ratio:", ratio)
         # If the column occupies more than 40% of the image -> close
         if ratio > 0.34:
             return True
@@ -327,9 +333,10 @@ class MyRobot(Supervisor):
         count = 0
         distances = self.get_distances()
 
-        if np.mean(distances) < 0.3:
-            self.move_backward_milisecond(50)
-            return
+        # if np.mean(distances) < 0.16:
+        #     print("----Too close to obstacle", np.mean(distances))
+        #     self.move_backward_milisecond(50)
+        #     return
 
         while (min(distances[0], distances[2]) < OBSTACLE_AVOID_THRESHOLD and count < OBSTACLE_AVOID_MAX_ATTEMPTS):
             second = random.randint(TURN_DURATION_MIN, TURN_DURATION_MAX)
@@ -601,7 +608,6 @@ class MyRobot(Supervisor):
         else:
             print('[info] Skipping closure mark due to cooldown')
 
-
     def estimate_column_distance(self, color):
         """Estimate horizontal distance to detected column using depth and known height."""
         self.stop_motor()
@@ -740,17 +746,14 @@ class MyRobot(Supervisor):
 
             # Occasionally bias frontier choice near known column estimates/start/end
             if random.random() < 0.6:
-                print("---Near column frontier")
-                chosen_frontier = self.select_frontier_near_known_points(frontier_regions)
+                chosen_frontier = self.select_frontier_near_column()
 
             # Fallback to existing selection logic if none chosen
             if chosen_frontier is None:
                 if self.chosen_frontier_count < EXPLORATION_MAP_UPDATE_FREQ:
-                    print("---Nearest frontier")
                     chosen_frontier = self.select_frontier_target(frontier_regions)
                     self.chosen_frontier_count += 1
                 else:
-                    print("---Random frontier")
                     chosen_frontier = self.select_frontier_target2(frontier_regions)
                     self.chosen_frontier_count = 0
 
@@ -834,28 +837,12 @@ class MyRobot(Supervisor):
                         random_duration = random.randint(700, 900)
                         self.turn_right_milisecond(random_duration)
 
-                    # elif signal[0] == 'column':
-                    #     _, color = signal
-                    #     column_distance = self.estimate_column_distance(color) 
-                    #     if column_distance is not None:
-                    #         column_position = self.position_ahead(column_distance / 100) 
-                    #         column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
-                    #         self.update_column_position(color, column_map_position)
-                            
-                    #         if color == 'blue':
-                    #             map_object.update_map_point(column_map_position, value=BLUE_COLUMN) 
-                    #         elif color == 'yellow':
-                    #             map_object.update_map_point(column_map_position, value=YELLOW_COLUMN)
-                            
-                        # self.align_to_column(color)
-                        # self.mark_on_map(column_distance, color)
-
             # --- Random exploration movement ---
-            if map_diff < 0.02:
-                self.adapt_direction()
-                self.set_robot_velocity(MOTOR_VELOCITY_FORWARD, MOTOR_VELOCITY_FORWARD)
+            # if map_diff < 0.02:
+            #     self.adapt_direction()
+            #     self.set_robot_velocity(MOTOR_VELOCITY_FORWARD, MOTOR_VELOCITY_FORWARD)
                 
-            if count % 30 == 0:
+            if count > 1000 and count % 50 == 0:
                 if self.robot_stuck(last_position, stuck_distance=0.16):
                     self.recover_from_stuck(turn_duration=(700, 900))
                 last_position = self.get_position()
@@ -934,6 +921,7 @@ class MyRobot(Supervisor):
         self.stop_camera_thread()
         self.stop_lidar_thread()
         self.stop_motor()
+        print("Exploration completed.")
         return self.path
 
 
@@ -1029,10 +1017,8 @@ class MyRobot(Supervisor):
         return True
 
     def frontier_following(self, path, vis=None):
-        stuck_counter = 0
         for target in path[5::5]:
             while self.step() != -1 and self.camera_detection_signal is None:
-                last_position = self.get_position()
                 for event in pygame.event.get(): 
                     if event.type == pygame.QUIT:
                         exit()
@@ -1045,21 +1031,19 @@ class MyRobot(Supervisor):
                     vis.draw_point(target[0], target[1], color=(0, 255, 0), radius=3)
                     pygame.display.flip()
 
+                # Get front distance to wall for monitoring
+                front_distance = self.get_min_front_distance()
                 
+                # --- Check for wall blocking the path ---
+                wall_threshold = 0.04  # meters (20cm) - wall very close
+                if front_distance < wall_threshold:
+                    print(f'-----Wall detected at {front_distance:.2f}')
+                    self.stop_motor()
+                    self.recover_from_stuck()
+                    return
                 
                 if self.follow_local_target(target):
-                    stuck_counter = 0
                     break
-                
-                if self.robot_stuck(last_position, stuck_distance=0.08):
-                    stuck_counter += 1
-                    if stuck_counter > 50:
-                        print("Stuck in frontier_following, drop path...")
-                        self.stop_motor()
-                        # self.lidar_update_map()
-                        self.recover_from_stuck()
-                        
-                        return
         self.stop_motor()
 
 
@@ -1342,34 +1326,15 @@ class MyRobot(Supervisor):
         
         return (centroid_x, centroid_y)
 
-    def select_frontier_near_known_points(self, frontier_regions, top_k=3, max_jitter=5):
-        """Bias frontier selection toward regions near known columns/start/end.
-
-        - Uses estimated column positions (blue/yellow) and start/end points if available.
-        - Takes up to `top_k` closest frontier regions to any known point, then chooses a random
-          cell from one of those regions with a small jitter.
-        - Returns None if no anchors or no frontier regions exist.
-        """
-        if not frontier_regions:
+    def select_frontier_near_column(self, max_jitter=5):
+        if self.yellow_estimated_pos is not None and self.end_point is None:
+            goal = self.yellow_estimated_pos
+            print("----YELLOW frontier")
+        elif self.blue_estimated_pos is not None and self.start_point is None:
+            goal = self.blue_estimated_pos 
+            print("----BLUE frontier")
+        else:
             return None
-
-        anchors = [p for p in [self.start_point, self.end_point, self.blue_estimated_pos, self.yellow_estimated_pos] if p is not None]
-        if len(anchors) == 0:
-            return None
-
-        region_distances = []
-        for region in frontier_regions:
-            region_cells = np.array(region)
-            centroid = np.mean(region_cells, axis=0)
-            dists = [np.linalg.norm(centroid - np.array(a)) for a in anchors]
-            region_distances.append((min(dists), region))
-
-        region_distances.sort(key=lambda x: x[0])
-        candidate_regions = [r for _, r in region_distances[:max(1, top_k)]]
-
-        chosen_region = random.choice(candidate_regions)
-        region_cells = np.array(chosen_region)
-        cell = random.choice(region_cells)
         jitter_x = random.randint(-max_jitter, max_jitter)
         jitter_y = random.randint(-max_jitter, max_jitter)
-        return (int(cell[0] + jitter_x), int(cell[1] + jitter_y))
+        return (int(goal[0] + jitter_x), int(goal[1] + jitter_y))
