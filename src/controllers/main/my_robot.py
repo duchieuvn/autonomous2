@@ -457,7 +457,6 @@ class MyRobot(Supervisor):
             if distance_moved < self.follow_target_position_threshold:
                 self.follow_target_stuck_count += 1
                 if self.follow_target_stuck_count >= self.follow_target_stuck_threshold:
-                    print(f"[Stuck] Robot stuck in follow_local_target - moved only {distance_moved:.4f}m in {self.follow_target_stuck_count} calls")
                     # Reset for next target
                     self.follow_target_stuck_count = 0
                     self.follow_target_last_position = None
@@ -1044,9 +1043,9 @@ class MyRobot(Supervisor):
                     self.map_object.target_position = target
 
                 reached, is_stuck = self.follow_local_target(target)
-                if is_stuck:
-                    print("[Frontier] Robot stuck during frontier following, recovering")
+                if is_stuck or min(self.get_distances()) < 0.05:
                     self.stop_motor()
+                    self.turn_right_milisecond(random.randint(200, 400))
                     self.move_backward_milisecond()
                     return
                 if reached:
