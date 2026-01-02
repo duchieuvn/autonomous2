@@ -270,6 +270,7 @@ class GridMap():
 
         for inflation_pixels in inflation_attempts:
             global_map = self.grid_map.copy().astype(np.float32)
+            global_map = utils.clean_small_obstacle_components(global_map, obstacle_value=OBSTACLE, min_size=6, connectivity=4)
             global_map = utils.remove_noisy_pixels(global_map, obstacle_value=OBSTACLE, connectivity=4)
             global_map = utils.inflate_obstacles(global_map, inflation_pixels=inflation_pixels)
             utils.expand_free_pixel(global_map, end_point, inflation_pixels=ASTAR_EXPANSION_PIXELS)
@@ -338,6 +339,7 @@ class GridMap():
         
         """Frontier-specific path finder using clearance-aware A*."""
         global_map = self.grid_map.copy().astype(np.float32)
+        global_map = utils.clean_small_obstacle_components(global_map, obstacle_value=OBSTACLE, min_size=6, connectivity=4)
         closed_mask = (global_map == CLOSED)
 
         # Temporary map: treat closed cells as free to avoid inflation expansion

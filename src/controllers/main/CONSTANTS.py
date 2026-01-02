@@ -31,7 +31,7 @@ PATH_MIN_LENGTH_M = 0.8
 # --- EXPLORATION & TIMING ---
 EXPLORATION_STEP_STUCK_CHECK = 15          # [USED] Check if robot is stuck every N steps
 EXPLORATION_MAP_UPDATE_FREQ = 20           # [USED] Update map every N steps
-EXPLORATION_FRONTIER_SELECTION_FREQ = 25   # [USED] Select new frontier target every N steps
+EXPLORATION_FRONTIER_SELECTION_FREQ = 5   # [USED] Select new frontier target every N steps
 EXPLORATION_START_FRONTIER_AFTER = 50  # [USED] Start frontier selection after N exploration steps
 EXPLORATION_PATH_PLANNING_FREQ = 100       # [USED] Plan global path every N steps
 

@@ -52,6 +52,11 @@ class MyRobot(Supervisor):
         self.stuck_signal = False  # Flag raised by stuck thread
         self.stuck_last_position = None
         self.stuck_lock = threading.Lock()
+        # Stuck detection for follow_local_target
+        self.follow_target_last_position = None
+        self.follow_target_stuck_count = 0
+        self.follow_target_position_threshold = 0.05  # meters - minimum movement to not be considered stuck
+        self.follow_target_stuck_threshold = 25  # number of calls without movement to consider stuck
 
     def start_camera_thread(self):
         """Start the continuous detection thread for red walls and columns."""
@@ -130,10 +135,7 @@ class MyRobot(Supervisor):
                             elif color == 'yellow' and self.end_point is not None:
                                 continue
 
-                            print(f"-----Detected {color} column")
-
                             update_count = self.blue_pos_update_count if color == 'blue' else self.yellow_pos_update_count
-                            self.camera_detection_signal = ('column', color)
                             column_mask = utils.segment_color(self.get_hsv_image(), color)
                             column_distance = self.estimate_column_distance(color) 
                             
@@ -142,13 +144,13 @@ class MyRobot(Supervisor):
                                 print(f"Column {color} is close", column_distance)
                                 self.mark_column(color)
                                 self.turn_right_milisecond(600)
-                                                        # Gate: only execute this block max 3 times per color
+                            
                             elif update_count < 3:
+                                self.camera_detection_signal = ('column', color)
                                 self.center_column_in_view(color)
                                 ratio = self.get_column_center_ratio(color)
                                 if ratio > 0.15:
                                     column_distance = self.estimate_column_distance(color) 
-                                    time.sleep(3)
                                     if column_distance is not None:
                                         column_position = self.position_ahead(column_distance / 100) 
                                         column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
@@ -197,7 +199,7 @@ class MyRobot(Supervisor):
         last_position = self.get_position()
         while self.stuck_thread_running:
             with self.stuck_lock:  
-                time.sleep(2)
+                time.sleep(4)
                 # Check if motors are running (any motor has non-zero velocity)
                 motor_velocities = [motor.getVelocity() for motor in self.motors.values()]
                 is_moving = any(abs(v) > 0.01 for v in motor_velocities)  # Small threshold to account for floating point
@@ -227,11 +229,11 @@ class MyRobot(Supervisor):
         return ratio
         
     def column_close(self, column_mask):
-        print("Checking column closeness...")
         nonzero_pixels = np.count_nonzero(column_mask)
         ratio = nonzero_pixels / (column_mask.shape[0] * column_mask.shape[1])
+        print("--closeness...", ratio)
         # If the column occupies more than 40% of the image -> close
-        if ratio > 0.3:
+        if ratio > 0.25:
             return True
         else:
             return False
@@ -440,16 +442,37 @@ class MyRobot(Supervisor):
         return best_v, best_w
     
     def follow_local_target(self, map_target):
-        # Return True if the robot reached the target
+        # Return (reached_target, is_stuck)
+        # Check if robot reached the target
         if self.get_map_distance(map_target) < PATH_FOLLOWING_TARGET_REACH_DISTANCE:
-            # self.stop_motor()
-            return True
+            # Reset stuck detection on successful reach
+            self.follow_target_last_position = None
+            self.follow_target_stuck_count = 0
+            return True, False
+        
+        # Check for stuck condition - robot not moving despite repeated calls
+        current_position = self.get_position()
+        if self.follow_target_last_position is not None:
+            distance_moved = np.linalg.norm(current_position - self.follow_target_last_position)
+            if distance_moved < self.follow_target_position_threshold:
+                self.follow_target_stuck_count += 1
+                if self.follow_target_stuck_count >= self.follow_target_stuck_threshold:
+                    print(f"[Stuck] Robot stuck in follow_local_target - moved only {distance_moved:.4f}m in {self.follow_target_stuck_count} calls")
+                    # Reset for next target
+                    self.follow_target_stuck_count = 0
+                    self.follow_target_last_position = None
+                    return False, True  # Not reached, but stuck
+            else:
+                # Robot is moving, reset counter
+                self.follow_target_stuck_count = 0
+        
+        self.follow_target_last_position = current_position
         
         world_target = self.convert_to_world_coordinates(map_target[0], map_target[1])
         v, w = self.dwa_planner(world_target)
         left_speed, right_speed = self.velocity_to_wheel_speeds(v, w)
         self.set_robot_velocity(left_speed, right_speed)
-        return False
+        return False, False
     
     def get_min_front_distance(self, angle_deg=None):
         if angle_deg is None:
@@ -791,9 +814,11 @@ class MyRobot(Supervisor):
             if chosen_frontier is None:
                 if random.random() < 0.35:
                     chosen_frontier = self.select_frontier_target(frontier_regions)
+                    print(count, "Nearest frontier---")
                     self.chosen_frontier_count += 1
                 else:
                     chosen_frontier = self.select_frontier_target2(frontier_regions)
+                    print(count, "Random frontier---")
                     self.chosen_frontier_count = 0
 
             if chosen_frontier:
@@ -841,7 +866,6 @@ class MyRobot(Supervisor):
         # Start continuous detection and lidar threads before any setup
         self.start_camera_thread()
         self.start_lidar_thread()
-        self.start_stuck_thread()
 
         map_object = self.map_object
         
@@ -909,7 +933,6 @@ class MyRobot(Supervisor):
         # Clean up detection and lidar threads
         self.stop_camera_thread()
         self.stop_lidar_thread()
-        self.stop_stuck_thread()
         self.stop_motor()
         
         if debug:
@@ -1020,12 +1043,13 @@ class MyRobot(Supervisor):
                     self.map_object.current_path = path
                     self.map_object.target_position = target
 
-                if self.stuck_signal or np.mean(self.get_distances()) < 0.05:
+                reached, is_stuck = self.follow_local_target(target)
+                if is_stuck:
+                    print("[Frontier] Robot stuck during frontier following, recovering")
                     self.stop_motor()
-                    self.recover_from_stuck()
+                    self.move_backward_milisecond()
                     return
-                
-                if self.follow_local_target(target):
+                if reached:
                     break
         self.stop_motor()
 
