@@ -145,11 +145,11 @@ class MyRobot(Supervisor):
                                 self.mark_column(color)
                                 self.turn_right_milisecond(600)
                             
-                            elif update_count < 3:
+                            elif update_count < 2:
                                 self.camera_detection_signal = ('column', color)
                                 self.center_column_in_view(color)
                                 ratio = self.get_column_center_ratio(color)
-                                if ratio > 0.15:
+                                if ratio > 0.08:
                                     column_distance = self.estimate_column_distance(color) 
                                     if column_distance is not None:
                                         column_position = self.position_ahead(column_distance / 100) 
@@ -796,6 +796,11 @@ class MyRobot(Supervisor):
         if (self.start_point is not None) and (self.end_point is not None):
             return True
         return False
+    
+    def slowly_360(self):
+        self.set_robot_velocity(5, -5)
+        self.step(800)
+        self.stop_motor()
 
     def handle_frontier_exploration(self, count, map_diff):
         frontier_regions = []
@@ -824,6 +829,7 @@ class MyRobot(Supervisor):
                 path_to_frontier = self.map_object.find_path_for_frontier(self.get_map_position(), chosen_frontier)
                 if path_to_frontier:
                     self.frontier_following(path_to_frontier)
+                    self.slowly_360()
 
         return frontier_regions, chosen_frontier, path_to_frontier
     
@@ -1324,7 +1330,7 @@ class MyRobot(Supervisor):
         
         return (centroid_x, centroid_y)
 
-    def select_frontier_near_column(self, max_jitter=5):
+    def select_frontier_near_column(self, max_jitter=8):
         if self.yellow_estimated_pos is not None and self.end_point is None:
             goal = self.yellow_estimated_pos
             print("----YELLOW frontier")
@@ -1335,4 +1341,9 @@ class MyRobot(Supervisor):
             return None
         jitter_x = random.randint(-max_jitter, max_jitter)
         jitter_y = random.randint(-max_jitter, max_jitter)
-        return (int(goal[0] + jitter_x), int(goal[1] + jitter_y))
+        goal = (int(goal[0] + jitter_x), int(goal[1] + jitter_y))
+        while self.map_object.there_is_obstacle(goal):
+            jitter_x = random.randint(-max_jitter, max_jitter)
+            jitter_y = random.randint(-max_jitter, max_jitter)
+            goal = (int(goal[0] + jitter_x), int(goal[1] + jitter_y)) 
+        return goal
