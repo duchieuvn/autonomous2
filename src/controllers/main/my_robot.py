@@ -865,7 +865,7 @@ class MyRobot(Supervisor):
 
             # Fallback to existing selection logic if none chosen
             if chosen_frontier is None:
-                if random.random() < 0.35:
+                if random.random() < 0.4:
                     chosen_frontier = self.select_frontier_target(frontier_regions)
                     print(count, "Nearest frontier---")
                     self.chosen_frontier_count += 1
@@ -947,8 +947,12 @@ class MyRobot(Supervisor):
                     self.camera_detection_signal = None  # Reset signal to allow camera thread to set new ones
 
                     if signal == 'red_wall':
-                        self.mark_closure_block()
+                        self.stop_motor()
+                        print('Red wall detected! Initiating alignment and marking closure block...')
                         self.align_to_red_wall()
+                        self.stop_motor()
+                        self.mark_closure_block()
+                        
                         # print('Done align to red wall')
                         random_duration = random.randint(700, 900)
                         self.turn_right_milisecond(random_duration)
@@ -1062,7 +1066,15 @@ class MyRobot(Supervisor):
                 if self.yellow_estimated_pos is not None:
                     vis.draw_point(int(self.yellow_estimated_pos[0]), int(self.yellow_estimated_pos[1]), color=(255, 255, 0), radius=7)
                 
+                # Handle OS/window events to keep the window responsive
                 pygame.display.flip()
+                if vis.handle_events():
+                    print("[Visualizer] Close requested, stopping exploration")
+                    self.stop_camera_thread()
+                    self.stop_lidar_thread()
+                    self.stop_motor()
+                    vis.close()
+                    return self.path
 
             count += 1
 
@@ -1203,7 +1215,7 @@ class MyRobot(Supervisor):
     #                     return
     #     self.stop_motor()
 
-    def frontier_following(self, path, vis=None, replan_interval=500):
+    def frontier_following(self, path, vis=None, replan_interval=40):
         """
         Frontier following with:
         - timestep-based replanning
@@ -1248,8 +1260,10 @@ class MyRobot(Supervisor):
                     print("[Frontier] Red wall detected during path following")
 
                     self.stop_motor()
-                    self.mark_closure_block()
                     self.align_to_red_wall()
+                    self.stop_motor()
+                    self.mark_closure_block()
+                    
 
                     random_duration = random.randint(700, 900)
                     self.turn_right_milisecond(random_duration)
@@ -1366,6 +1380,13 @@ class MyRobot(Supervisor):
                     vis.draw_point(rx, ry, color=(0, 0, 255), radius=5)
                     vis.draw_point(frontier_goal[0], frontier_goal[1], color=(255, 0, 0), radius=5)
                     pygame.display.flip()
+                    if vis.handle_events():
+                        print("[Visualizer] Close requested, stopping frontier_following")
+                        self.stop_camera_thread()
+                        self.stop_lidar_thread()
+                        self.stop_motor()
+                        vis.close()
+                        return
 
                 # --------------------------------------------------
                 # 6) Follow local target
@@ -1446,6 +1467,11 @@ class MyRobot(Supervisor):
                     vis.draw_point(rx, ry, color=(0, 0, 255), radius=5)
                     vis.draw_point(target[0], target[1], color=(0, 255, 0), radius=3)
                     pygame.display.flip()
+                    if vis.handle_events():
+                        print("[Visualizer] Close requested, aborting path_following_pipeline")
+                        self.stop_motor()
+                        vis.close()
+                        return False
                 
                 # --- Check for wall blocking the path before stuck detection ---
                 wall_threshold = 0.2  # meters (20cm) - wall very close
