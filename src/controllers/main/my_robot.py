@@ -55,6 +55,12 @@ class MyRobot(Supervisor):
         self.stuck_signal = False  # Flag raised by stuck thread
         self.stuck_last_position = None
         self.stuck_lock = threading.Lock()
+        # Stuck detection for follow_local_target (other_branch)
+        self.follow_target_last_position = None
+        self.follow_target_stuck_count = 0
+        self.follow_target_position_threshold = 0.05  # meters - minimum movement to not be considered stuck
+        self.follow_target_stuck_threshold = 25  # number of calls without movement to consider stuck
+        
         # --- Green carpet state (initialized to sensible defaults) ---
         # Camera intrinsics / extrinsics used by green-carpet projection
         try:
@@ -157,40 +163,47 @@ class MyRobot(Supervisor):
                         if red_wall:
                             self.camera_detection_signal = 'red_wall'
                             continue
-                        # Green carpet has priority — skip column detection
+                        #(diff_other_branch)
+                        # Green carpet has priority — skip column detection (diff_other_branch)
                         if self.green_carpet_active:
                             # time.sleep(0.1)
                             continue
 
                         # Check for columns
                         color = self.detect_column()
+                        #(diff_other_branch)
                         if color:
+                            if color == 'blue' and self.start_point is not None:
+                                continue
+                            elif color == 'yellow' and self.end_point is not None:
+                                continue
+
                             update_count = self.blue_pos_update_count if color == 'blue' else self.yellow_pos_update_count
-                            self.camera_detection_signal = ('column', color)
                             column_mask = utils.segment_color(self.get_hsv_image(), color)
                             column_distance = self.estimate_column_distance(color) 
                             
-                            if self.column_close(column_mask, column_distance):
+                            if self.column_close(column_mask):
                                 self.center_column_in_view(color)
-                                print("Column is close", column_distance)
+                                print(f"Column {color} is close", column_distance)
                                 self.mark_column(color)
-
-                            # Gate: only execute this block max 3 times per color
+                                self.turn_right_milisecond(600)
+                            
                             elif update_count < 2:
+                                self.camera_detection_signal = ('column', color)
                                 self.center_column_in_view(color)
-                                column_distance = self.estimate_column_distance(color) 
-                                if column_distance is not None:
-                                    column_position = self.position_ahead(column_distance / 100) 
-                                    column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
-                                    self.update_column_estimation(color, column_map_position)
+                                ratio = self.get_column_center_ratio(color)
+                                if ratio > 0.08:
+                                    column_distance = self.estimate_column_distance(color) 
+                                    if column_distance is not None:
+                                        column_position = self.position_ahead(column_distance / 100) 
+                                        column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
+                                        self.update_column_estimation(color, column_map_position)
+                                        print(f"Updated {color} column position")
+                                        if color == 'blue':
+                                            self.blue_pos_update_count += 1
+                                        elif color == 'yellow':
+                                            self.yellow_pos_update_count += 1
                                     
-                                    if color == 'blue':
-                                        self.map_object.update_map_point(column_map_position, value=BLUE_COLUMN)
-                                        self.blue_pos_update_count += 1
-                                    elif color == 'yellow':
-                                        self.map_object.update_map_point(column_map_position, value=YELLOW_COLUMN)
-                                        self.yellow_pos_update_count += 1
-                                
                 time.sleep(0.5)  # Check every 500ms
 
             except Exception as e:
@@ -208,16 +221,17 @@ class MyRobot(Supervisor):
                 if self.lidar is None:
                     time.sleep(0.5)
                     continue
+                #(diff_other_branch)
                 # DO NOT UPDATE MAP IF ROBOT IS NOT ON GROUND
-                if not self.robot_on_ground():
-                    time.sleep(0.1)
-                    continue
+                # if not self.robot_on_ground():
+                #     time.sleep(0.1)
+                #     continue
                     
                 # Only update map when robot is not turning
                 if not self.is_turning():
                     with self.lidar_lock:
                         self.stop_motor()
-                        self.step(self.time_step)
+                        # self.step(self.time_step)
                         time.sleep(0.1)  # Allow robot to stabilize
                         self.lidar_update_map()
                 time.sleep(0.2)  # Update at same frequency as before
@@ -226,12 +240,48 @@ class MyRobot(Supervisor):
                 print(f"[Lidar] Error in lidar update loop: {e}")
                 time.sleep(1.0)
 
-    def column_close(self, column_mask, column_distance):
+    def stuck_detection_loop(self):
+        """Continuous stuck detection loop."""
+        # Wait for sensors to initialize
+        time.sleep(1.0)
+        last_position = self.get_position()
+        while self.stuck_thread_running:
+            with self.stuck_lock:  
+                time.sleep(4)
+                # Check if motors are running (any motor has non-zero velocity)
+                motor_velocities = [motor.getVelocity() for motor in self.motors.values()]
+                is_moving = any(abs(v) > 0.01 for v in motor_velocities)  # Small threshold to account for floating point
+                
+                if is_moving:
+                    # Only check for stuck condition when motors are running
+                    if self.robot_stuck(last_position, stuck_distance=0.07):
+                        self.stuck_signal = True
+                    else:
+                        self.stuck_signal = False
+                    last_position = self.get_position()
+                else:
+                    # Motors not running, don't flag as stuck and reset reference position
+                    self.stuck_signal = False
+                    last_position = self.get_position()                              
+    
+    def get_column_center_ratio(self, color):
+        hsv_img = self.get_hsv_image()
+        if hsv_img is None:
+            return 0.0
+        
+        center_frame = hsv_img[:, hsv_img.shape[1]//3: 2*hsv_img.shape[1]//3]
+
+        column_mask = utils.segment_color(center_frame, color)
         nonzero_pixels = np.count_nonzero(column_mask)
         ratio = nonzero_pixels / (column_mask.shape[0] * column_mask.shape[1])
-        print("----Column ratio:", ratio)
+        return ratio
+        
+    def column_close(self, column_mask):
+        nonzero_pixels = np.count_nonzero(column_mask)
+        ratio = nonzero_pixels / (column_mask.shape[0] * column_mask.shape[1])
+        print("--closeness...", ratio)
         # If the column occupies more than 40% of the image -> close
-        if ratio > 0.34:
+        if ratio > 0.25:
             return True
         else:
             return False
@@ -369,8 +419,8 @@ class MyRobot(Supervisor):
     def adapt_direction(self):
         count = 0
         distances = self.get_distances()
-
-        if np.mean(distances) < 0.3:
+        # (diff_other_branch)
+        if np.mean(distances) < 0.3: # other branch is 0.16
             self.move_backward_milisecond(50)
             return
 
@@ -439,16 +489,36 @@ class MyRobot(Supervisor):
         return best_v, best_w
     
     def follow_local_target(self, map_target):
-        # Return True if the robot reached the target
+        # Return (reached_target, is_stuck)
+        # Check if robot reached the target
         if self.get_map_distance(map_target) < PATH_FOLLOWING_TARGET_REACH_DISTANCE:
-            # self.stop_motor()
-            return True
+            # Reset stuck detection on successful reach
+            self.follow_target_last_position = None
+            self.follow_target_stuck_count = 0
+            return True, False
+        
+        # Check for stuck condition - robot not moving despite repeated calls
+        current_position = self.get_position()
+        if self.follow_target_last_position is not None:
+            distance_moved = np.linalg.norm(current_position - self.follow_target_last_position)
+            if distance_moved < self.follow_target_position_threshold:
+                self.follow_target_stuck_count += 1
+                if self.follow_target_stuck_count >= self.follow_target_stuck_threshold:
+                    # Reset for next target
+                    self.follow_target_stuck_count = 0
+                    self.follow_target_last_position = None
+                    return False, True  # Not reached, but stuck
+            else:
+                # Robot is moving, reset counter
+                self.follow_target_stuck_count = 0
+        
+        self.follow_target_last_position = current_position
         
         world_target = self.convert_to_world_coordinates(map_target[0], map_target[1])
         v, w = self.dwa_planner(world_target)
         left_speed, right_speed = self.velocity_to_wheel_speeds(v, w)
         self.set_robot_velocity(left_speed, right_speed)
-        return False
+        return False, False
     
     def get_min_front_distance(self, angle_deg=None):
         if angle_deg is None:
@@ -644,7 +714,6 @@ class MyRobot(Supervisor):
         else:
             print('[info] Skipping closure mark due to cooldown')
 
-
     def estimate_column_distance(self, color):
         """Estimate horizontal distance to detected column using depth and known height."""
         self.stop_motor()
@@ -660,6 +729,7 @@ class MyRobot(Supervisor):
         # Segment column in image
         column_mask = utils.segment_color(hsv_img, color)
         if not np.any(column_mask):
+            print(f"[Error] No {color} column detected in image.")
             return None
         
         # Extract valid depth values (filter out -1 sentinel)
@@ -667,6 +737,7 @@ class MyRobot(Supervisor):
         valid_depths = depth_values[depth_values > 0]
         
         if len(valid_depths) == 0:
+            print("Invalid depth")
             return None
         
         # Calculate horizontal distance using Pythagorean theorem
@@ -674,7 +745,7 @@ class MyRobot(Supervisor):
         column_height_cm = 125.0
         
         if max_depth_cm <= column_height_cm:
-            return None
+            return np.mean(valid_depths)  # Fallback to average depth if max is too small
         
         horizontal_distance_cm = np.sqrt(max_depth_cm ** 2 - column_height_cm ** 2)
         return horizontal_distance_cm 
@@ -772,7 +843,14 @@ class MyRobot(Supervisor):
         if (self.start_point is not None) and (self.end_point is not None):
             return True
         return False
+    
+    def slowly_360(self):
+        self.set_robot_velocity(5, -5)
+        self.step(800)
+        self.stop_motor()
 
+
+    # (diff_other_branch) we have vis here maybe causes slowing
     def handle_frontier_exploration(self, count, map_diff, vis):
         frontier_regions = []
         chosen_frontier = None
@@ -783,24 +861,25 @@ class MyRobot(Supervisor):
 
             # Occasionally bias frontier choice near known column estimates/start/end
             if random.random() < 0.6:
-                print("---Near column frontier")
-                chosen_frontier = self.select_frontier_near_known_points(frontier_regions)
+                chosen_frontier = self.select_frontier_near_column()
 
             # Fallback to existing selection logic if none chosen
             if chosen_frontier is None:
-                if self.chosen_frontier_count < EXPLORATION_MAP_UPDATE_FREQ:
-                    print("---Nearest frontier")
+                if random.random() < 0.35:
                     chosen_frontier = self.select_frontier_target(frontier_regions)
+                    print(count, "Nearest frontier---")
                     self.chosen_frontier_count += 1
                 else:
                     print("---Random frontier")
                     chosen_frontier = self.select_frontier_target2(frontier_regions)
+                    print(count, "Random frontier---")
                     self.chosen_frontier_count = 0
 
             if chosen_frontier:
                 path_to_frontier = self.map_object.find_path_for_frontier(self.get_map_position(), chosen_frontier)
-                if path_to_frontier:
-                    self.frontier_following(path_to_frontier, vis)
+                # if path_to_frontier:
+                #     self.frontier_following(path_to_frontier, vis)
+                #     self.slowly_360()
 
         return frontier_regions, chosen_frontier, path_to_frontier
     
@@ -843,11 +922,12 @@ class MyRobot(Supervisor):
         # Start continuous detection and lidar threads before any setup
         self.start_camera_thread()
         self.start_lidar_thread()
+        active_frontier = None
+        active_path = None
+
 
         map_object = self.map_object
-        vis = None
-        if debug:
-            vis = MapVisualizer()
+        vis = MapVisualizer() if debug else None
 
         count = 0
         chosen_frontier = None  # store the currently selected frontier
@@ -859,17 +939,12 @@ class MyRobot(Supervisor):
         last_position = self.get_position()
 
         while self.step(self.time_step) != -1 and not self.found_all_2_columns():
-            if debug:
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:
-                        exit()
 
             # Check for camera detection signals from background thread
             with self.detection_lock:
                 if self.camera_detection_signal is not None:
                     signal = self.camera_detection_signal
                     self.camera_detection_signal = None  # Reset signal to allow camera thread to set new ones
-                    
 
                     if signal == 'red_wall':
                         self.mark_closure_block()
@@ -878,32 +953,10 @@ class MyRobot(Supervisor):
                         random_duration = random.randint(700, 900)
                         self.turn_right_milisecond(random_duration)
 
-                    if signal is not None:
-                        if signal[0] == 'column':
-                            _, color = signal
-                            # PASSIVE behavior only
-                            print(f"[Passive] Column {color} observed during path following")
-
-                    # elif signal[0] == 'column':
-                    #     _, color = signal
-                    #     column_distance = self.estimate_column_distance(color) 
-                    #     if column_distance is not None:
-                    #         column_position = self.position_ahead(column_distance / 100) 
-                    #         column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
-                    #         self.update_column_position(color, column_map_position)
-                            
-                    #         if color == 'blue':
-                    #             map_object.update_map_point(column_map_position, value=BLUE_COLUMN) 
-                    #         elif color == 'yellow':
-                    #             map_object.update_map_point(column_map_position, value=YELLOW_COLUMN)
-                            
-                        # self.align_to_column(color)
-                        # self.mark_on_map(column_distance, color)
-
-            # --- Random exploration movement ---
-            if map_diff < 0.02:
-                self.adapt_direction()
-                self.set_robot_velocity(MOTOR_VELOCITY_FORWARD, MOTOR_VELOCITY_FORWARD)
+            # # --- Random exploration movement ---
+            # if map_diff < 0.02:
+            #     self.adapt_direction()
+            #     self.set_robot_velocity(MOTOR_VELOCITY_FORWARD, MOTOR_VELOCITY_FORWARD)
                 
             # if count % 30 == 0:
             #     if self.robot_stuck(last_position, stuck_distance=0.16):
@@ -931,11 +984,24 @@ class MyRobot(Supervisor):
                     print(f"[Green Carpet] marking attempt failed: {e}")
 
             map_diff = utils.percentage_map_differences(previous_map, map_object.grid_map)
-            frontier_regions, chosen_frontier, path_to_frontier = self.handle_frontier_exploration(count, map_diff, vis)
+            # frontier_regions, chosen_frontier, path_to_frontier = self.handle_frontier_exploration(count, map_diff, vis)
+            if active_frontier is None:
+                frontier_regions, chosen_frontier, path_to_frontier = \
+                    self.handle_frontier_exploration(count, map_diff, vis)
+
+                if chosen_frontier and path_to_frontier:
+                    active_frontier = chosen_frontier
+                    active_path = path_to_frontier
+            if active_frontier is not None and active_path is not None:
+                self.frontier_following(active_path, vis)
+
+                # Frontier finished or dropped → allow new selection
+                active_frontier = None
+                active_path = None
 
             previous_map = map_object.grid_map.copy()
 
-            if debug:
+            if vis is not None:
                 display_map = map_object.grid_map.copy()
                 frontier_overlay_points = []
 
@@ -1004,6 +1070,11 @@ class MyRobot(Supervisor):
         self.stop_camera_thread()
         self.stop_lidar_thread()
         self.stop_motor()
+        
+        if vis is not None:
+            vis.close()
+        
+        print("Exploration completed.")
         return self.path
 
 
@@ -1132,7 +1203,7 @@ class MyRobot(Supervisor):
     #                     return
     #     self.stop_motor()
 
-    def frontier_following(self, path, vis=None, replan_interval=80):
+    def frontier_following(self, path, vis=None, replan_interval=500):
         """
         Frontier following with:
         - timestep-based replanning
@@ -1299,7 +1370,8 @@ class MyRobot(Supervisor):
                 # --------------------------------------------------
                 # 6) Follow local target
                 # --------------------------------------------------
-                if self.follow_local_target(target):
+                reached, is_stuck = self.follow_local_target(target)
+                if reached:
                     stuck_counter = 0
                     break
 
@@ -1362,10 +1434,6 @@ class MyRobot(Supervisor):
         for idx, target in enumerate(sampled_targets):
             stuck_counter = 0  # Reset stuck counter for each target
             while self.step() != -1:
-                for event in pygame.event.get(): 
-                    if event.type == pygame.QUIT:
-                        exit()
-                
                 # Get front distance to wall for monitoring
                 front_distance = self.get_min_front_distance()
 
@@ -1404,7 +1472,7 @@ class MyRobot(Supervisor):
                     stuck_counter = 0
                     last_position = self.get_position()
 
-                reached_target = self.follow_local_target(target)
+                reached_target, is_stuck = self.follow_local_target(target)
                 if reached_target:
                     print(f'Reached target: {target} (front distance to wall: {front_distance:.2f}m)')
                     # If this is the last sampled target, we've reached the frontier
@@ -1601,37 +1669,23 @@ class MyRobot(Supervisor):
         
         return (centroid_x, centroid_y)
 
-    def select_frontier_near_known_points(self, frontier_regions, top_k=3, max_jitter=5):
-        """Bias frontier selection toward regions near known columns/start/end.
-
-        - Uses estimated column positions (blue/yellow) and start/end points if available.
-        - Takes up to `top_k` closest frontier regions to any known point, then chooses a random
-          cell from one of those regions with a small jitter.
-        - Returns None if no anchors or no frontier regions exist.
-        """
-        if not frontier_regions:
+    def select_frontier_near_column(self, max_jitter=8):
+        if self.yellow_estimated_pos is not None and self.end_point is None:
+            goal = self.yellow_estimated_pos
+            print("----YELLOW frontier")
+        elif self.blue_estimated_pos is not None and self.start_point is None:
+            goal = self.blue_estimated_pos 
+            print("----BLUE frontier")
+        else:
             return None
-
-        anchors = [p for p in [self.start_point, self.end_point, self.blue_estimated_pos, self.yellow_estimated_pos] if p is not None]
-        if len(anchors) == 0:
-            return None
-
-        region_distances = []
-        for region in frontier_regions:
-            region_cells = np.array(region)
-            centroid = np.mean(region_cells, axis=0)
-            dists = [np.linalg.norm(centroid - np.array(a)) for a in anchors]
-            region_distances.append((min(dists), region))
-
-        region_distances.sort(key=lambda x: x[0])
-        candidate_regions = [r for _, r in region_distances[:max(1, top_k)]]
-
-        chosen_region = random.choice(candidate_regions)
-        region_cells = np.array(chosen_region)
-        cell = random.choice(region_cells)
         jitter_x = random.randint(-max_jitter, max_jitter)
         jitter_y = random.randint(-max_jitter, max_jitter)
-        return (int(cell[0] + jitter_x), int(cell[1] + jitter_y))
+        goal = (int(goal[0] + jitter_x), int(goal[1] + jitter_y))
+        while self.map_object.there_is_obstacle(goal):
+            jitter_x = random.randint(-max_jitter, max_jitter)
+            jitter_y = random.randint(-max_jitter, max_jitter)
+            goal = (int(goal[0] + jitter_x), int(goal[1] + jitter_y)) 
+        return goal
 
 
 # GREEN CARPET LOGIC ---------------------------------------------
