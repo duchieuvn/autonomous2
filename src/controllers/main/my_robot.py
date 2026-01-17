@@ -1299,7 +1299,7 @@ class MyRobot(Supervisor):
     #                     return
     #     self.stop_motor()
 
-    def frontier_following(self, path, vis=None, replan_interval=40):
+    def frontier_following(self, path, vis=None, replan_interval=20):
         """
         Frontier following with:
         - timestep-based replanning
