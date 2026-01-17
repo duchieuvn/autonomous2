@@ -92,30 +92,24 @@ class GridMap():
         P = 1 / (1 + np.exp(-limited_score_map))
         
 
-        # Build protection masks for cells that should not be overwritten by sensor updates
+        # Protect special regions
         closed_mask = (self.grid_map == CLOSED)
         green_protect_mask = (self.grid_map == GREEN_CARPET)
+        protected_mask = closed_mask | green_protect_mask
 
-        # Combine all protection masks
-        protected_mask = closed_mask | green_protect_mask 
-
-        # Only update unprotected cells based on probability thresholds
-        unknown_mask = (self.log_odds == INITIAL_LOG_ODD)
+        unknown_mask = (self.log_odds == INITIAL_LOG_ODD) & (~protected_mask)
         obstacle_mask = (P > 0.7) & (~protected_mask)
         free_mask = (P < 0.5) & (~protected_mask)
 
-        # 1. Update obstacles and free space
-        self.grid_map[obstacle_mask] = OBSTACLE
-        self.grid_map[free_mask] = FREESPACE
-        
-        # 2. Restore all protected cells at the end
-        self.grid_map[green_protect_mask] = GREEN_CARPET
-        # self.grid_map[closed_mask] = CLOSED
-
-        # Update obstacles and free space
+        # Apply updates only to unprotected cells
         self.grid_map[obstacle_mask] = OBSTACLE
         self.grid_map[free_mask] = FREESPACE
         self.grid_map[unknown_mask] = UNKNOWN
+
+        # Restore protected cells at the end (guarantee they remain)
+        self.grid_map[green_protect_mask] = GREEN_CARPET
+        self.grid_map[closed_mask] = CLOSED
+
 
     def lidar_update_grid_map(self, robot_pos, lidar_points):
         map_points = self.convert_to_map_coordinate_matrix(lidar_points)
