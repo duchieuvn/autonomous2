@@ -141,6 +141,34 @@ class MyRobot(Supervisor):
         if self.stuck_thread:
             self.stuck_thread.join(timeout=1.0)
             print("[Stuck] Stopped stuck detection thread")
+        # ------------------------------------------------------------------
+    # Visualization helper (GridMap owns the pygame loop in map.py)
+    # ------------------------------------------------------------------
+    def _update_vis_state(self, current_path=None, target_position=None, extra_points=None):
+        """Update GridMap visualization state in a thread-safe way.
+
+        GridMap.run_visualization_loop() (map.py) reads:
+        - robot_position, current_path, target_position, column_points
+        under map_object.vis_lock.
+        """
+        mo = self.map_object
+        with mo.vis_lock:
+            rx, ry = self.get_map_position()
+            mo.robot_position = (int(rx), int(ry))
+            mo.current_path = current_path
+            mo.target_position = target_position
+
+            # Build column_points without overwriting special markers accidentally.
+            pts = []
+            if self.blue_estimated_pos is not None:
+                pts.append((int(self.blue_estimated_pos[0]), int(self.blue_estimated_pos[1]), (0, 255, 255)))
+            if self.yellow_estimated_pos is not None:
+                pts.append((int(self.yellow_estimated_pos[0]), int(self.yellow_estimated_pos[1]), (255, 255, 0)))
+            if extra_points:
+                pts.extend(extra_points)
+
+            mo.column_points = pts
+
 
     def camera_detection_loop(self):
         """Continuous detection loop with shared variable communication."""
@@ -174,8 +202,10 @@ class MyRobot(Supervisor):
                         if color:
                             if color == 'blue' and self.start_point is not None:
                                 continue
-                            elif color == 'yellow' and self.end_point is not None:
+                            if color == 'yellow' and self.end_point is not None:
                                 continue
+                            self.camera_detection_signal = ('column', color)
+                            continue
 
                             update_count = self.blue_pos_update_count if color == 'blue' else self.yellow_pos_update_count
                             column_mask = utils.segment_color(self.get_hsv_image(), color)
@@ -246,7 +276,7 @@ class MyRobot(Supervisor):
                 # Only update map when robot is not turning
                 if not self.is_turning():
                     with self.lidar_lock:
-                        self.stop_motor()
+                        # self.stop_motor()
                         # self.step(self.time_step)
                         time.sleep(0.1)  # Allow robot to stabilize
                         self.lidar_update_map()
@@ -303,31 +333,51 @@ class MyRobot(Supervisor):
             return False
 
     def is_turning(self):
-        # Check if the robot is turning, with 10-step cooldown after turning stops
         left_speed = self.motors['fl'].getVelocity()
         right_speed = self.motors['fr'].getVelocity()
         turning_now = abs(left_speed - right_speed) > 0.08
-        return turning_now
-        
+
         if turning_now:
-            # Currently turning
             self.is_currently_turning = True
             self.steps_since_turning = 0
             return True
-        else:
-            # Not currently turning
-            if self.is_currently_turning:
-                # Turning just stopped, start cooldown
-                self.steps_since_turning += 1
-                if self.steps_since_turning < 3:
-                    return True  # Still in cooldown period
-                else:
-                    # Cooldown complete
-                    self.is_currently_turning = False
-                    return False
-            else:
-                # Not turning and not in cooldown
-                return False
+
+        # not turning now
+        if self.is_currently_turning:
+            self.steps_since_turning += 1
+            # small cooldown for stabilization
+            if self.steps_since_turning < 3:
+                return True
+            self.is_currently_turning = False
+
+        return False
+
+    # def is_turning(self):
+    #     # Check if the robot is turning, with 10-step cooldown after turning stops
+    #     left_speed = self.motors['fl'].getVelocity()
+    #     right_speed = self.motors['fr'].getVelocity()
+    #     turning_now = abs(left_speed - right_speed) > 0.08
+    #     return turning_now
+        
+    #     if turning_now:
+    #         # Currently turning
+    #         self.is_currently_turning = True
+    #         self.steps_since_turning = 0
+    #         return True
+    #     else:
+    #         # Not currently turning
+    #         if self.is_currently_turning:
+    #             # Turning just stopped, start cooldown
+    #             self.steps_since_turning += 1
+    #             if self.steps_since_turning < 3:
+    #                 return True  # Still in cooldown period
+    #             else:
+    #                 # Cooldown complete
+    #                 self.is_currently_turning = False
+    #                 return False
+    #         else:
+    #             # Not turning and not in cooldown
+    #             return False
 
     def stop_motor(self):
         for motor in self.motors.values():
@@ -641,11 +691,11 @@ class MyRobot(Supervisor):
         else:
             self.set_robot_velocity(-8,8)
 
-        while self.step() != -1:
+        while self.step(self.time_step) != -1:
             current_heading = self.get_heading('rad')
             angle_diff = abs(utils.get_angle_diff(current_heading, initial_heading))
 
-            if angle_diff - rad_to_turn < TURN_ANGLE_COMPLETION_THRESHOLD:  # Allow a small threshold to avoid overshooting
+            if angle_diff >= rad_to_turn - TURN_ANGLE_COMPLETION_THRESHOLD:
                 break
 
         self.stop_motor()
@@ -707,7 +757,7 @@ class MyRobot(Supervisor):
                 turn_speed = Kp * error + Kd * (error - last_error)
                 last_error = error
                 self.set_robot_velocity(backward_speed + turn_speed, backward_speed - turn_speed)
-                self.step(self.time_step)
+                # self.step(self.time_step)
             else: # No red detected
                 self.stop_motor()
                 break
@@ -890,18 +940,39 @@ class MyRobot(Supervisor):
 
             if chosen_frontier:
                 path_to_frontier = self.map_object.find_path_for_frontier(self.get_map_position(), chosen_frontier)
-                # if path_to_frontier:
-                #     self.frontier_following(path_to_frontier, vis)
-                #     self.slowly_360()
+                if path_to_frontier:
+                    self.frontier_following(path_to_frontier)
+                    self.slowly_360()
 
         return frontier_regions, chosen_frontier, path_to_frontier
     
     def mark_column(self, color):
+        mp = tuple(self.get_map_position())
         if color == 'blue':
-            self.start_point = self.get_map_position() 
+            self.start_point = mp
         elif color == 'yellow':
-            self.end_point = self.get_map_position()
+            self.end_point = mp
+    # def mark_column(self, color):
+    #     if color == 'blue':
+    #         self.start_point = self.get_map_position() 
+    #     elif color == 'yellow':
+    #         self.end_point = self.get_map_position()
 
+    def update_column_estimation_from_view(self, color):
+        """Passive estimation update (no steering). Safe to call during path following."""
+        ratio = self.get_column_center_ratio(color)
+        if ratio <= 0.08:
+            return
+        dist = self.estimate_column_distance(color)
+        if dist is None:
+            return
+        wp = self.position_ahead(dist / 100.0)
+        mp = self.convert_to_map_coordinates(wp[0], wp[1])
+        self.update_column_estimation(color, mp)
+        if color == 'blue':
+            self.blue_pos_update_count += 1
+        else:
+            self.yellow_pos_update_count += 1
 
     def update_column_estimation(self, color, position):
         """
@@ -969,9 +1040,52 @@ class MyRobot(Supervisor):
                         self.mark_closure_block()
                         
                         # print('Done align to red wall')
-                        random_duration = random.randint(700, 900)
+                        random_duration = random.randint(500, 700)
                         self.turn_right_milisecond(random_duration)
+                    # 🟦🟨 Column detected (MAIN thread handles motion + marking)
+                    if isinstance(signal, tuple) and len(signal) >= 2 and signal[0] == 'column':
+                        _, color = signal
 
+                        # Skip if already set
+                        if color == 'blue' and self.start_point is not None:
+                            continue
+                        if color == 'yellow' and self.end_point is not None:
+                            continue
+
+                        hsv = self.get_hsv_image()
+                        if hsv is None:
+                            continue
+
+                        column_mask = utils.segment_color(hsv, color)
+
+                        # If close: center + mark as actual start/end
+                        if self.column_close(column_mask):
+                            self.stop_motor()
+                            self.center_column_in_view(color)
+                            dist = self.estimate_column_distance(color)
+                            # Prefer mark_on_map (uses distance threshold), fallback to mark_column
+                            if dist is not None:
+                                self.mark_on_map(dist, color=color)
+                            else:
+                                self.mark_column(color)
+                            self.turn_right_milisecond(600)
+
+                        # If far: update estimation (doesn't finalize start/end)
+                        else:
+                            self.stop_motor()
+                            self.center_column_in_view(color)
+                            ratio = self.get_column_center_ratio(color)
+                            if ratio > 0.08:
+                                dist = self.estimate_column_distance(color)
+                                if dist is not None:
+                                    wp = self.position_ahead(dist / 100.0)
+                                    mp = self.convert_to_map_coordinates(wp[0], wp[1])
+                                    self.update_column_estimation(color, mp)
+                                    if color == 'blue':
+                                        self.blue_pos_update_count += 1
+                                    else:
+                                        self.yellow_pos_update_count += 1
+                            self.turn_right_milisecond(600)
             # # --- Random exploration movement ---
             # if map_diff < 0.02:
             #     self.adapt_direction()
@@ -1021,20 +1135,19 @@ class MyRobot(Supervisor):
             previous_map = map_object.grid_map.copy()
 
             if debug:
-                # Update GridMap state for visualization thread
-                with map_object.vis_lock:
-                    rx, ry = self.get_map_position()
-                    map_object.robot_position = (rx, ry)
-                    map_object.current_path = path_to_frontier
-                    map_object.target_position = chosen_frontier
+                # Show *active* frontier/path if one is currently being followed.
+                shown_path = active_path if active_path is not None else path_to_frontier
+                shown_target = active_frontier if active_frontier is not None else chosen_frontier
+                self._update_vis_state(current_path=shown_path, target_position=shown_target)
+
                     
-                    # Update column points for visualization
-                    column_points = []
-                    if self.blue_estimated_pos is not None:
-                        column_points.append((int(self.blue_estimated_pos[0]), int(self.blue_estimated_pos[1]), (0, 255, 255)))
-                    if self.yellow_estimated_pos is not None:
-                        column_points.append((int(self.yellow_estimated_pos[0]), int(self.yellow_estimated_pos[1]), (255, 255, 0)))
-                    map_object.column_points = column_points
+                # Update column points for visualization
+                column_points = []
+                if self.blue_estimated_pos is not None:
+                    column_points.append((int(self.blue_estimated_pos[0]), int(self.blue_estimated_pos[1]), (0, 255, 255)))
+                if self.yellow_estimated_pos is not None:
+                    column_points.append((int(self.yellow_estimated_pos[0]), int(self.yellow_estimated_pos[1]), (255, 255, 0)))
+                map_object.column_points = column_points
 
             count += 1
 
@@ -1045,9 +1158,20 @@ class MyRobot(Supervisor):
         
         if debug:
             map_object.stop_visualization()
-        
         print("Exploration completed.")
-        return self.path
+
+        # Build the main path once both columns are found
+        if self.start_point is not None and self.end_point is not None:
+            start = tuple(self.start_point)
+            goal = tuple(self.end_point)
+            main_path = self.find_path(start, goal)
+        else:
+            main_path = []
+
+        return main_path
+    
+        # print("Exploration completed.")
+        # return self.path
 
 
     def find_path(self, start_point, end_point):
@@ -1194,7 +1318,7 @@ class MyRobot(Supervisor):
         stuck_counter = 0
 
         target_index = 5
-        OBSTACLE_THRESHOLD = 0.22   # meters
+        OBSTACLE_THRESHOLD = 0.10   # meters
         REVERSE_DISTANCE = 0.12     # meters
         MAP_UPDATE_WAIT_STEPS = 6   # allow LiDAR/map to update
         CARPET_CHECK_EVERY = 20     # timesteps (cheap + safe)
@@ -1253,11 +1377,20 @@ class MyRobot(Supervisor):
                 # 🔵🟡 Column: PASSIVE only (consume signal; keep moving)
                 if isinstance(signal, tuple) and len(signal) >= 2 and signal[0] == 'column':
                     _, color = signal
-                    # Do NOT break, do NOT return.
-                    # The camera thread already updated estimates/map if needed.
-                    # Just log (optional).
-                    # print(f"[Frontier] Passive column {color} seen; continuing path")
-                    pass
+                    # Passive update only (no turning, no stopping)
+                    try:
+                        self.update_column_estimation_from_view(color)
+                    except Exception:
+                        pass
+                # --------------------------------------------------
+                # Keep GridMap visualization live while this function blocks explore()
+                # --------------------------------------------------
+                self._update_vis_state(
+                    current_path=current_path,
+                    target_position=target,
+                    extra_points=[(int(frontier_goal[0]), int(frontier_goal[1]), (255, 0, 0))]
+                )
+
 
                 # --------------------------------------------------
                 # 2) ACTIVE: Green carpet marking during path following
@@ -1331,25 +1464,25 @@ class MyRobot(Supervisor):
                         print(f"[Replan] Failed: {e}")
 
                 # --------------------------------------------------
-                # 5) Visualization
-                # --------------------------------------------------
-                if vis:
-                    vis.display(self.map_object.grid_map)
-                    vis.draw_path(current_path)
-                    rx, ry = self.get_map_position()
-                    self.map_object.robot_position = (rx, ry)
-                    self.map_object.current_path = path
-                    self.map_object.target_position = target
-                    vis.draw_point(rx, ry, color=(0, 0, 255), radius=5)
-                    vis.draw_point(frontier_goal[0], frontier_goal[1], color=(255, 0, 0), radius=5)
-                    pygame.display.flip()
-                    if vis.handle_events():
-                        print("[Visualizer] Close requested, stopping frontier_following")
-                        self.stop_camera_thread()
-                        self.stop_lidar_thread()
-                        self.stop_motor()
-                        vis.close()
-                        return
+                # # 5) Visualization
+                # # --------------------------------------------------
+                # if vis:
+                #     vis.display(self.map_object.grid_map)
+                #     vis.draw_path(current_path)
+                #     rx, ry = self.get_map_position()
+                #     self.map_object.robot_position = (rx, ry)
+                #     self.map_object.current_path = path
+                #     self.map_object.target_position = target
+                #     vis.draw_point(rx, ry, color=(0, 0, 255), radius=5)
+                #     vis.draw_point(frontier_goal[0], frontier_goal[1], color=(255, 0, 0), radius=5)
+                #     pygame.display.flip()
+                #     if vis.handle_events():
+                #         print("[Visualizer] Close requested, stopping frontier_following")
+                #         self.stop_camera_thread()
+                #         self.stop_lidar_thread()
+                #         self.stop_motor()
+                #         vis.close()
+                #         return
 
                 # --------------------------------------------------
                 # 6) Follow local target
@@ -1386,9 +1519,6 @@ class MyRobot(Supervisor):
         
         Shows the path overlaid on the occupancy grid map via the visualization thread.
         """
-        # if vis is None:
-        #     vis = Visualizer()
-        
         # Smooth the path using spline A* to get smoother waypoints
         try:
             from astar_2_spline import runAStarSearch as runAStarSearchSpline
@@ -1423,22 +1553,19 @@ class MyRobot(Supervisor):
                 # Get front distance to wall for monitoring
                 front_distance = self.get_min_front_distance()
 
-                # Update GridMap state for visualization
-                with self.map_object.vis_lock:
-                    rx, ry = self.get_map_position()
-                    self.map_object.robot_position = (rx, ry)
-                    self.map_object.current_path = path
-                    self.map_object.target_position = target
-                    if frontier_target:
-                        # Add frontier target as a special column point
-                        self.map_object.column_points = [(frontier_target[0], frontier_target[1], (0, 200, 255))]
+                # Update GridMap state for visualization (GridMap owns the pygame loop)
+                extra = None
+                if frontier_target is not None:
+                    extra = [(int(frontier_target[0]), int(frontier_target[1]), (0, 200, 255))]
+                self._update_vis_state(current_path=path, target_position=target, extra_points=extra)
+
                 
                 # --- Check for wall blocking the path before stuck detection ---
                 wall_threshold = 0.2  # meters (20cm) - wall very close
                 if front_distance < wall_threshold:
                     print(f'[warning] Wall detected at {front_distance:.2f}m blocking path to target {target}. Skipping frontier.')
                     if frontier_target is not None:
-                        self.visited_frontiers.append(frontier_target)
+                        self.map_object.visited_frontiers.append(frontier_target)
                     self.stop_motor()
                     return False
                 
@@ -1847,6 +1974,7 @@ class MyRobot(Supervisor):
         current_detection_size = current_map_points.shape[0]
 
         if current_detection_size < min_pixel_threshold:
+            self.green_carpet_active = False
             # Carpet is either not detected or not close enough (size filter)
             return False
 
@@ -1854,6 +1982,18 @@ class MyRobot(Supervisor):
         pts = current_map_points.astype(np.int32)
         y_indices = pts[:, 1]
         x_indices = pts[:, 0]
+        H, W = self.grid_map.shape
+        valid = (x_indices >= 0) & (x_indices < W) & (y_indices >= 0) & (y_indices < H)
+        x_indices = x_indices[valid]
+        y_indices = y_indices[valid]
+
+        if x_indices.size == 0:
+            self.green_carpet_active = False
+            return False
+
+        current_detection_size = int(x_indices.size)
+        current_centroid = np.array([np.mean(x_indices), np.mean(y_indices)])
+
         
         # Calculate Current Centroid (Mean map coordinates)
         current_centroid = np.array([np.mean(x_indices), np.mean(y_indices)])
@@ -1919,7 +2059,16 @@ class MyRobot(Supervisor):
             final_pts = final_map_points.astype(np.int32)
             final_y = final_pts[:, 1]
             final_x = final_pts[:, 0]
-            final_size = final_map_points.shape[0]
+
+            H, W = self.grid_map.shape
+            valid2 = (final_x >= 0) & (final_x < W) & (final_y >= 0) & (final_y < H)
+            final_x = final_x[valid2]
+            final_y = final_y[valid2]
+            final_size = int(final_x.size) 
+            if final_x.size == 0:
+                self.green_carpet_active = False
+                return False
+
             
             # --- FINAL PERMANENT MARKING ---
             try:
