@@ -24,6 +24,26 @@ def remove_noisy_pixels(grid_map, obstacle_value=1, connectivity=8):
     cleaned_map = np.where(cleaned == 255, obstacle_value, 0)
     return cleaned_map
 
+def clean_small_obstacle_components(grid_map, obstacle_value=1, min_size=5, connectivity=8):
+    """
+    Remove obstacle components smaller than min_size pixels while preserving other cell values.
+    """
+    binary_uint8 = np.where(grid_map == obstacle_value, 255, 0).astype(np.uint8)
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+        binary_uint8, connectivity=connectivity
+    )
+
+    keep_mask = np.zeros_like(binary_uint8)
+    for label in range(1, num_labels):
+        if stats[label, cv2.CC_STAT_AREA] >= min_size:
+            keep_mask[labels == label] = 255
+
+    cleaned_map = grid_map.copy()
+    # Set small components back to free space (0) while keeping other cells unchanged
+    drop_mask = (keep_mask == 0) & (grid_map == obstacle_value)
+    cleaned_map[drop_mask] = 0
+    return cleaned_map
+
 def inflate_obstacles(grid_map, inflation_pixels=10):
     kernel_size = int(2 * inflation_pixels + 1)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))

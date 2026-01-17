@@ -31,7 +31,7 @@ PATH_MIN_LENGTH_M = 0.8
 # --- EXPLORATION & TIMING ---
 EXPLORATION_STEP_STUCK_CHECK = 15          # [USED] Check if robot is stuck every N steps
 EXPLORATION_MAP_UPDATE_FREQ = 20           # [USED] Update map every N steps
-EXPLORATION_FRONTIER_SELECTION_FREQ = 50   # [USED] Select new frontier target every N steps
+EXPLORATION_FRONTIER_SELECTION_FREQ = 5   # [USED] Select new frontier target every N steps
 EXPLORATION_START_FRONTIER_AFTER = 50  # [USED] Start frontier selection after N exploration steps
 EXPLORATION_PATH_PLANNING_FREQ = 100       # [USED] Plan global path every N steps
 
@@ -117,7 +117,7 @@ MAPPING_PROBABILITY_OBSTACLE = 0.7          # [UNUSED] Probability threshold for
 MAPPING_PROBABILITY_FREE = 0.5              # [UNUSED] Probability threshold for free space (hardcoded 0.5 in update_grid_map)
 
 # --- A* PATHFINDING ---
-ASTAR_INFLATION_LEVELS = [2.5, 3, 3.5, 4]   # [USED] Inflation levels for escalating A*
+ASTAR_INFLATION_LEVELS = [4, 3, 2]   # [USED] Inflation levels for escalating A*
 ASTAR_EXPANSION_PIXELS = 3                 # [USED] Expansion around start/end points
 ASTAR_FRONTIER_INFLATION = 3.5          # [UNUSED] Inflation level for frontier pathfinding (hardcoded 13 in find_path_for_frontier)
 

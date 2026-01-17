@@ -5,7 +5,6 @@ import cv2
 import random
 import os
 import sys
-from vis import MapVisualizer
 import pygame
 import time
 import utils
@@ -190,7 +189,24 @@ class MyRobot(Supervisor):
                             
                             elif update_count < 2:
                                 self.camera_detection_signal = ('column', color)
+                                self.turn_right_milisecond(600)
+                            
+                            elif update_count < 2:
+                                self.camera_detection_signal = ('column', color)
                                 self.center_column_in_view(color)
+                                ratio = self.get_column_center_ratio(color)
+                                if ratio > 0.08:
+                                    column_distance = self.estimate_column_distance(color) 
+                                    if column_distance is not None:
+                                        column_position = self.position_ahead(column_distance / 100) 
+                                        column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
+                                        self.update_column_estimation(color, column_map_position)
+                                        print(f"Updated {color} column position")
+                                        if color == 'blue':
+                                            self.blue_pos_update_count += 1
+                                        elif color == 'yellow':
+                                            self.yellow_pos_update_count += 1
+                                    
                                 ratio = self.get_column_center_ratio(color)
                                 if ratio > 0.08:
                                     column_distance = self.estimate_column_distance(color) 
@@ -849,9 +865,7 @@ class MyRobot(Supervisor):
         self.step(800)
         self.stop_motor()
 
-
-    # (diff_other_branch) we have vis here maybe causes slowing
-    def handle_frontier_exploration(self, count, map_diff, vis):
+    def handle_frontier_exploration(self, count, map_diff):
         frontier_regions = []
         chosen_frontier = None
         path_to_frontier = None
@@ -870,7 +884,6 @@ class MyRobot(Supervisor):
                     print(count, "Nearest frontier---")
                     self.chosen_frontier_count += 1
                 else:
-                    print("---Random frontier")
                     chosen_frontier = self.select_frontier_target2(frontier_regions)
                     print(count, "Random frontier---")
                     self.chosen_frontier_count = 0
@@ -915,7 +928,6 @@ class MyRobot(Supervisor):
 
         TODO:
         - improve column distance estimation (far or close)
-        - Stop when both columns found
         - Path following from start to end in another function
         '''
 
@@ -927,7 +939,10 @@ class MyRobot(Supervisor):
 
 
         map_object = self.map_object
-        vis = MapVisualizer() if debug else None
+        
+        # Start visualization in separate thread
+        if debug:
+            map_object.start_visualization()
 
         count = 0
         chosen_frontier = None  # store the currently selected frontier
@@ -991,13 +1006,13 @@ class MyRobot(Supervisor):
             # frontier_regions, chosen_frontier, path_to_frontier = self.handle_frontier_exploration(count, map_diff, vis)
             if active_frontier is None:
                 frontier_regions, chosen_frontier, path_to_frontier = \
-                    self.handle_frontier_exploration(count, map_diff, vis)
+                    self.handle_frontier_exploration(count, map_diff)
 
                 if chosen_frontier and path_to_frontier:
                     active_frontier = chosen_frontier
                     active_path = path_to_frontier
             if active_frontier is not None and active_path is not None:
-                self.frontier_following(active_path, vis)
+                self.frontier_following(active_path)
 
                 # Frontier finished or dropped → allow new selection
                 active_frontier = None
@@ -1005,76 +1020,21 @@ class MyRobot(Supervisor):
 
             previous_map = map_object.grid_map.copy()
 
-            if vis is not None:
-                display_map = map_object.grid_map.copy()
-                frontier_overlay_points = []
-
-                # Color frontier regions based on their size
-                if len(frontier_regions):
-                    region_sizes = [len(region) for region in frontier_regions]
-
-                    if region_sizes:
-                        min_size = min(region_sizes)
-                        max_size = max(region_sizes)
-                        size_range = max_size - min_size if max_size > min_size else 1
-
-                        frontier_color_lookup = {
-                            FRONTIER_VISUALIZATION_COLOR_SMALL: (0, 0, 100),      # blue
-                            FRONTIER_VISUALIZATION_COLOR_MEDIUM: (0, 200, 155),    # cyan
-                            FRONTIER_VISUALIZATION_COLOR_LARGE: (100, 100, 0),     # yellow
-                            FRONTIER_VISUALIZATION_COLOR_LARGEST: (100, 0, 0),     # red
-                        }
-
-                        for region in frontier_regions:
-                            region_size = len(region)
-                            size_normalized = (region_size - min_size) / size_range if size_range > 0 else 0
-
-                            if size_normalized < 0.33:
-                                color_value = FRONTIER_VISUALIZATION_COLOR_SMALL
-                            elif size_normalized < 0.66:
-                                color_value = FRONTIER_VISUALIZATION_COLOR_MEDIUM
-                            elif size_normalized < 0.95:
-                                color_value = FRONTIER_VISUALIZATION_COLOR_LARGE
-                            else:
-                                color_value = FRONTIER_VISUALIZATION_COLOR_LARGEST
-
-                            rgb = frontier_color_lookup.get(color_value, (255, 0, 0))
-
-                            # Apply color to all cells in the region
-                            for x, y in region:
-                                if 0 <= x < MAP_SIZE and 0 <= y < MAP_SIZE:
-                                    display_map[y, x] = color_value
-                                    frontier_overlay_points.append((x, y, rgb))
-
-                vis.display(display_map)
-
-                # Draw frontier overlays with explicit colors to avoid color-map conflicts
-                for fx, fy, fcolor in frontier_overlay_points:
-                    vis.draw_point(fx, fy, color=fcolor, radius=2)
-
-                if path_to_frontier:
-                    vis.draw_path(path_to_frontier)
-
-                rx, ry = self.get_map_position()
-                vis.draw_point(rx, ry, color=(0, 0, 255), radius=5)
-                if chosen_frontier:
-                    vis.draw_point(chosen_frontier[0], chosen_frontier[1], color=(255, 0, 0), radius=5)
-                
-                # Draw start and end points if found
-                if self.blue_estimated_pos is not None:
-                    vis.draw_point(int(self.blue_estimated_pos[0]), int(self.blue_estimated_pos[1]), color=(0, 255, 255), radius=7)
-                if self.yellow_estimated_pos is not None:
-                    vis.draw_point(int(self.yellow_estimated_pos[0]), int(self.yellow_estimated_pos[1]), color=(255, 255, 0), radius=7)
-                
-                # Handle OS/window events to keep the window responsive
-                pygame.display.flip()
-                if vis.handle_events():
-                    print("[Visualizer] Close requested, stopping exploration")
-                    self.stop_camera_thread()
-                    self.stop_lidar_thread()
-                    self.stop_motor()
-                    vis.close()
-                    return self.path
+            if debug:
+                # Update GridMap state for visualization thread
+                with map_object.vis_lock:
+                    rx, ry = self.get_map_position()
+                    map_object.robot_position = (rx, ry)
+                    map_object.current_path = path_to_frontier
+                    map_object.target_position = chosen_frontier
+                    
+                    # Update column points for visualization
+                    column_points = []
+                    if self.blue_estimated_pos is not None:
+                        column_points.append((int(self.blue_estimated_pos[0]), int(self.blue_estimated_pos[1]), (0, 255, 255)))
+                    if self.yellow_estimated_pos is not None:
+                        column_points.append((int(self.yellow_estimated_pos[0]), int(self.yellow_estimated_pos[1]), (255, 255, 0)))
+                    map_object.column_points = column_points
 
             count += 1
 
@@ -1083,8 +1043,8 @@ class MyRobot(Supervisor):
         self.stop_lidar_thread()
         self.stop_motor()
         
-        if vis is not None:
-            vis.close()
+        if debug:
+            map_object.stop_visualization()
         
         print("Exploration completed.")
         return self.path
@@ -1377,6 +1337,9 @@ class MyRobot(Supervisor):
                     vis.display(self.map_object.grid_map)
                     vis.draw_path(current_path)
                     rx, ry = self.get_map_position()
+                    self.map_object.robot_position = (rx, ry)
+                    self.map_object.current_path = path
+                    self.map_object.target_position = target
                     vis.draw_point(rx, ry, color=(0, 0, 255), radius=5)
                     vis.draw_point(frontier_goal[0], frontier_goal[1], color=(255, 0, 0), radius=5)
                     pygame.display.flip()
@@ -1415,11 +1378,13 @@ class MyRobot(Supervisor):
 
 
 
-    def path_following_pipeline(self, path, vis=None, frontier_target=None):
-        """Follow a path. If a Visualizer `vis` is provided, reuse it to avoid recreating
-        the Pygame window (which causes flicker). If not provided, create one once.
+
+
+
+    def path_following_pipeline(self, path, frontier_target=None):
+        """Follow a path with visualization through GridMap state.
         
-        Shows the path overlaid on the occupancy grid map.
+        Shows the path overlaid on the occupancy grid map via the visualization thread.
         """
         # if vis is None:
         #     vis = Visualizer()
@@ -1458,20 +1423,15 @@ class MyRobot(Supervisor):
                 # Get front distance to wall for monitoring
                 front_distance = self.get_min_front_distance()
 
-                if vis:
-                    vis.display(self.map_object.grid_map, path)
-                    if frontier_target:
-                        vis.draw_point(frontier_target[0], frontier_target[1], color=(0, 200, 255), radius=5)
-                    
+                # Update GridMap state for visualization
+                with self.map_object.vis_lock:
                     rx, ry = self.get_map_position()
-                    vis.draw_point(rx, ry, color=(0, 0, 255), radius=5)
-                    vis.draw_point(target[0], target[1], color=(0, 255, 0), radius=3)
-                    pygame.display.flip()
-                    if vis.handle_events():
-                        print("[Visualizer] Close requested, aborting path_following_pipeline")
-                        self.stop_motor()
-                        vis.close()
-                        return False
+                    self.map_object.robot_position = (rx, ry)
+                    self.map_object.current_path = path
+                    self.map_object.target_position = target
+                    if frontier_target:
+                        # Add frontier target as a special column point
+                        self.map_object.column_points = [(frontier_target[0], frontier_target[1], (0, 200, 255))]
                 
                 # --- Check for wall blocking the path before stuck detection ---
                 wall_threshold = 0.2  # meters (20cm) - wall very close
@@ -1531,7 +1491,7 @@ class MyRobot(Supervisor):
 
     
     def transform_points_to_world(self, points_local):
-        """
+        """    def path_following_pipeline(self, path, frontier_target=None):
         Transform a batch of 2D points from robot-local frame to world frame using NumPy.
 
         Parameters:
@@ -1713,8 +1673,7 @@ class MyRobot(Supervisor):
             goal = (int(goal[0] + jitter_x), int(goal[1] + jitter_y)) 
         return goal
 
-
-# GREEN CARPET LOGIC ---------------------------------------------
+        # GREEN CARPET LOGIC ---------------------------------------------
 
     def get_green_carpet_points(self):
         """
@@ -2023,3 +1982,4 @@ class MyRobot(Supervisor):
         except Exception:
             return False
             
+
