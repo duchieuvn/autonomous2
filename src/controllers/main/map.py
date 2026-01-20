@@ -56,7 +56,7 @@ class GridMap():
         """Check if a map target contains an obstacle."""
         cell = self.grid_map[map_target[1], map_target[0]]
 
-        if cell == OBSTACLE or cell == GREEN_CARPET:
+        if cell == OBSTACLE or cell == GREEN_CARPET or cell == CLOSED:
             return True
 
         return False
@@ -92,23 +92,26 @@ class GridMap():
         P = 1 / (1 + np.exp(-limited_score_map))
         
 
-        # Protect special regions
+       # Build protection masks for cells that should not be overwritten by sensor updates
         closed_mask = (self.grid_map == CLOSED)
         green_protect_mask = (self.grid_map == GREEN_CARPET)
+
         protected_mask = closed_mask | green_protect_mask
 
+        # Only update unprotected cells based on probability thresholds
         unknown_mask = (self.log_odds == INITIAL_LOG_ODD) & (~protected_mask)
         obstacle_mask = (P > 0.7) & (~protected_mask)
         free_mask = (P < 0.5) & (~protected_mask)
 
-        # Apply updates only to unprotected cells
+        # Apply updates
         self.grid_map[obstacle_mask] = OBSTACLE
         self.grid_map[free_mask] = FREESPACE
         self.grid_map[unknown_mask] = UNKNOWN
 
-        # Restore protected cells at the end (guarantee they remain)
+        # Restore protected cells (guarantee persistence)
         self.grid_map[green_protect_mask] = GREEN_CARPET
         self.grid_map[closed_mask] = CLOSED
+
 
 
     def lidar_update_grid_map(self, robot_pos, lidar_points):
@@ -267,11 +270,29 @@ class GridMap():
 
         for inflation_pixels in inflation_attempts:
             global_map = self.grid_map.copy().astype(np.float32)
-            global_map = utils.clean_small_obstacle_components(global_map, obstacle_value=OBSTACLE, min_size=6, connectivity=4)
-            global_map = utils.remove_noisy_pixels(global_map, obstacle_value=OBSTACLE, connectivity=4)
-            global_map = utils.inflate_obstacles(global_map, inflation_pixels=inflation_pixels)
+            closed_mask = (global_map == CLOSED)
+            green_mask  = (global_map == GREEN_CARPET)
+
+            # --- do NOT inflate closures/green: make them free during inflation ---
+            temp_map = global_map.copy()
+            temp_map[closed_mask] = FREESPACE
+            temp_map[green_mask]  = FREESPACE
+
+            # preprocessing + inflate
+            temp_map = utils.clean_small_obstacle_components(temp_map, obstacle_value=OBSTACLE, min_size=6, connectivity=4)
+            temp_map = utils.remove_noisy_pixels(temp_map, obstacle_value=OBSTACLE, connectivity=4)
+            temp_map = utils.inflate_obstacles(temp_map, inflation_pixels=inflation_pixels)
+
+            # --- re-apply closures/green as hard obstacles after inflation ---
+            temp_map[closed_mask] = OBSTACLE
+            temp_map[green_mask]  = OBSTACLE
+
+            global_map = temp_map
+
             utils.expand_free_pixel(global_map, end_point, inflation_pixels=ASTAR_EXPANSION_PIXELS)
             utils.expand_free_pixel(global_map, start_point, inflation_pixels=ASTAR_EXPANSION_PIXELS)
+            # debugging output
+            cv2.imwrite(f"debug_inflated_map_{inflation_pixels}px.png", global_map*255)
 
             path = runAStarSearchSpline(global_map, start_point, end_point)
 
@@ -306,29 +327,35 @@ class GridMap():
             return best_path
 
         # Fallback: try planning on raw grid
-        try:
-            raw_map = self.grid_map.copy().astype(np.float32)
-            raw_map = utils.remove_noisy_pixels(raw_map, obstacle_value=OBSTACLE, connectivity=4)
-            raw_path = runAStarSearchSpline(raw_map, start_point, end_point)
-            if raw_path is not None and len(raw_path) > 1:
-                try:
-                    raw_len = 0.0
-                    prev_w = self.robot.convert_to_world_coordinates(raw_path[0][0], raw_path[0][1])
-                    for p in raw_path[1:]:
-                        cur_w = self.robot.convert_to_world_coordinates(p[0], p[1])
-                        dx = cur_w[0] - prev_w[0]
-                        dy = cur_w[1] - prev_w[1]
-                        raw_len += (dx*dx + dy*dy) ** 0.5
-                        prev_w = cur_w
-                except Exception:
-                    raw_len = 0.0
-                print(f"[info] find_path: no inflated candidate long enough; returning raw-map path length={raw_len:.2f}m")
-                return raw_path
-        except Exception as e:
-            print(f"[warning] find_path raw-map fallback failed: {e}")
+        # try:
+        #     raw_map = self.grid_map.copy().astype(np.float32)
+        #     raw_map = utils.remove_noisy_pixels(raw_map, obstacle_value=OBSTACLE, connectivity=4)
+        #     utils.expand_free_pixel(raw_map, end_point, inflation_pixels=ASTAR_EXPANSION_PIXELS)
+        #     utils.expand_free_pixel(raw_map, start_point, inflation_pixels=ASTAR_EXPANSION_PIXELS)
+        #     # debugging output
+        #     cv2.imwrite("debug_raw_map.png", raw_map*255)
 
-        print(f"[info] find_path: no path found between points after inflation attempts; returning None")
-        return None
+        #     raw_path = runAStarSearchSpline(raw_map, start_point, end_point)
+        #     if raw_path is not None and len(raw_path) > 1:
+        #         try:
+        #             raw_len = 0.0
+        #             prev_w = self.robot.convert_to_world_coordinates(raw_path[0][0], raw_path[0][1])
+        #             for p in raw_path[1:]:
+        #                 cur_w = self.robot.convert_to_world_coordinates(p[0], p[1])
+        #                 dx = cur_w[0] - prev_w[0]
+        #                 dy = cur_w[1] - prev_w[1]
+        #                 raw_len += (dx*dx + dy*dy) ** 0.5
+        #                 prev_w = cur_w
+        #         except Exception:
+        #             raw_len = 0.0
+        #         print(f"[info] find_path: no inflated candidate long enough; returning raw-map path length={raw_len:.2f}m")
+        #         return raw_path
+        # except Exception as e:
+        #     print(f"[warning] find_path raw-map fallback failed: {e}")
+
+        # print(f"[info] find_path: no path found between points after inflation attempts; returning None")
+        # return None
+
 
     def find_path_for_frontier(self, start_point, end_point):
         if start_point is None or end_point is None:
