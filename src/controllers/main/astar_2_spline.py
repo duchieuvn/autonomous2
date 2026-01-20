@@ -314,6 +314,6 @@ def runAStarSearch(global_map, start_coords, goal_coords):
     # smooth_path = smoothPath(path, method='parametric_spline', smoothness=0.7)
     # smooth_path = smoothPath(path, method='corner_aware', smoothness=1.0)
     # smooth_path = smoothPath(path, method='bezier_like', smoothness=0.8)
-    smooth_path = smoothPath(path, method='bspline', smoothness=0.5)
+    smooth_path = smoothPath(path, method='bspline', smoothness=0.2)
     
     return smooth_path
