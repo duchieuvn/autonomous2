@@ -276,7 +276,7 @@ class GridMap():
             # --- do NOT inflate closures/green: make them free during inflation ---
             temp_map = global_map.copy()
             temp_map[closed_mask] = FREESPACE
-            temp_map[green_mask]  = FREESPACE
+            temp_map[green_mask]  = OBSTACLE
 
             # preprocessing + inflate
             temp_map = utils.clean_small_obstacle_components(temp_map, obstacle_value=OBSTACLE, min_size=6, connectivity=4)
@@ -370,7 +370,7 @@ class GridMap():
         # Temporary map: treat closed cells as free to avoid inflation expansion
         temp_map = global_map.copy()
         temp_map[closed_mask] = FREESPACE
-        temp_map[green_mask]  = FREESPACE
+        temp_map[green_mask]  = OBSTACLE
         
 
         # Run standard preprocessing on temp_map
