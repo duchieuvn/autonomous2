@@ -1530,6 +1530,13 @@ class MyRobot(Supervisor):
                     # 5) Move away a bit
                     self.turn_right_milisecond(350)
 
+                    if drop_on_red_wall:
+                        if not hasattr(self.map_object, "visited_frontiers"):
+                            self.map_object.visited_frontiers = []
+                        self.map_object.visited_frontiers.append(tuple(frontier_goal))
+                        self.stop_motor()
+                        return False
+
                   # 🔵🟡 Column: PASSIVE only (consume signal; keep moving)
                 if isinstance(signal, tuple) and len(signal) >= 2 and signal[0] == 'column':
                     _, color = signal
@@ -2361,16 +2368,17 @@ class MyRobot(Supervisor):
 
         # --- 1. Color Segmentation and Pixel Selection ---
         # **ACTION REQUIRED: TUNE THESE VALUES**
-        lower_green = np.array([40, 40, 40])
-        upper_green = np.array([80, 255, 255])
+        lower_green = np.array([40, 15, 5])
+        upper_green = np.array([95, 255, 255])
+
         
         green_mask = cv2.inRange(hsv_img, lower_green, upper_green)
         
         h_start = int(self.cam_height * 0.5) 
         green_mask[:h_start, :] = 0
         
-        if cv2.countNonZero(green_mask) < 50:
-            return np.array([])
+        # if cv2.countNonZero(green_mask) < 50:
+        #     return np.array([])
 
         v_pixels, u_pixels = np.where(green_mask == 255) # v=row (y), u=col (x)
 
@@ -2442,64 +2450,150 @@ class MyRobot(Supervisor):
         
         return mask
     
+    def get_front_clearance_ds(self):
+        d = self.get_distances()
+        if len(d) < 4:
+            return float('inf')
+        return float(min(d[0], d[2]))  # fl, fr
+
+    def get_back_clearance_ds(self):
+        d = self.get_distances()
+        if len(d) < 4:
+            return float('inf')
+        return float(min(d[1], d[3]))  # rl, rr
 
     def align_to_green_carpet(self):
-            """
-            Aligns the robot to center the detected green carpet in the camera view.
-            Uses a P-controller based on the centroid of the green mask.
-            """
-            print("Aligning to green carpet...")
+        """
+        Adaptive alignment (distance-sensors only):
+        - if front blocked -> reverse while aligning (if back safe)
+        - if both front & back tight -> rotate in place
+        - else -> forward while aligning
+        """
+        print("Aligning to green carpet (adaptive, DS-only).")
 
-            # P controller constants
-            Kp = 0.015  # Proportional gain for turning (Increased gain for faster reaction)
-            error_threshold = 10  # Pixel tolerance for centering
+        Kp = 0.015
+        error_threshold = 10
+        max_turn = 6.0
+
+        # thresholds in the SAME units as your range sensors (usually meters in Webots)
+        TH_BLOCK = 0.30     # consider "blocked" if closer than this
+        TH_BACK_SAFE = 0.22 # allow reversing only if back clearance > this
+
+        FWD = 3.0
+        REV = -3.0
+
+        steps = 0
+        MAX_STEPS = 120
+
+        while self.step(self.time_step) != -1:
+            steps += 1
+            if steps > MAX_STEPS:
+                self.stop_motor()
+                print("Green alignment timeout.")
+                break
+
+            hsv_img = self.get_hsv_image()
+            if hsv_img is None:
+                self.stop_motor()
+                break
+
+            height, width, _ = hsv_img.shape
+            h_start = int(height * 0.5)
+            hsv_cropped = hsv_img[h_start:, :]
+
+            lower_green = np.array([40, 40, 40])
+            upper_green = np.array([80, 255, 255])
+            green_mask = cv2.inRange(hsv_cropped, lower_green, upper_green)
+
+            M = cv2.moments(green_mask)
+            if M["m00"] <= 0:
+                self.stop_motor()
+                print("Green carpet lost during alignment.")
+                break
+
+            cX = int(M["m10"] / M["m00"])
+            error = cX - (width // 2)
+
+            if abs(error) < error_threshold:
+                self.stop_motor()
+                print("Green carpet alignment complete.")
+                break
+
+            # --- DS-only decision ---
+            front_d = self.get_front_clearance_ds()
+            back_d = self.get_back_clearance_ds()
+
+            if (front_d < TH_BLOCK) and (back_d < TH_BLOCK):
+                base = 0.0  # corridor/corner -> rotate only
+            elif front_d < TH_BLOCK:
+                base = REV if back_d > TH_BACK_SAFE else 0.0  # reverse if safe else rotate
+            else:
+                base = FWD  # front clear -> forward align
+
+            turn = float(np.clip(Kp * error, -max_turn, max_turn))
+
+            left = base + turn
+            right = base - turn
+            self.set_robot_velocity(left, right)
+
+
+    # def align_to_green_carpet(self):
+    #         """
+    #         Aligns the robot to center the detected green carpet in the camera view.
+    #         Uses a P-controller based on the centroid of the green mask.
+    #         """
+    #         print("Aligning to green carpet...")
+
+    #         # P controller constants
+    #         Kp = 0.015  # Proportional gain for turning (Increased gain for faster reaction)
+    #         error_threshold = 10  # Pixel tolerance for centering
             
-            # Moderate forward speed to maintain momentum while aligning
-            forward_speed = 3.0  
+    #         # Moderate forward speed to maintain momentum while aligning
+    #         forward_speed = 3.0  
 
-            while self.step(self.time_step) != -1:
-                hsv_img = self.get_hsv_image()
-                if hsv_img is None:
-                    self.stop_motor()
-                    break
+    #         while self.step(self.time_step) != -1:
+    #             hsv_img = self.get_hsv_image()
+    #             if hsv_img is None:
+    #                 self.stop_motor()
+    #                 break
 
-                height, width, _ = hsv_img.shape
+    #             height, width, _ = hsv_img.shape
                 
-                # Use the bottom half image for reliable ground-level detection
-                h_start = int(height * 0.5) 
-                hsv_cropped = hsv_img[h_start:, :]
+    #             # Use the bottom half image for reliable ground-level detection
+    #             h_start = int(height * 0.5) 
+    #             hsv_cropped = hsv_img[h_start:, :]
 
-                # Segment green color (using the same tuned values as get_green_carpet_points)
-                lower_green = np.array([40, 40, 40])
-                upper_green = np.array([80, 255, 255])
-                green_mask = cv2.inRange(hsv_cropped, lower_green, upper_green)
+    #             # Segment green color (using the same tuned values as get_green_carpet_points)
+    #             lower_green = np.array([40, 40, 40])
+    #             upper_green = np.array([80, 255, 255])
+    #             green_mask = cv2.inRange(hsv_cropped, lower_green, upper_green)
                 
-                M = cv2.moments(green_mask)
+    #             M = cv2.moments(green_mask)
                 
-                if M["m00"] > 0:
-                    # Calculate centroid of the green mask (cX is pixel column)
-                    cX = int(M["m10"] / M["m00"])
-                    # Adjust cX by the cropped height offset to center against the full width
-                    # error relative to the center of the *original* camera frame width
-                    error = cX - (width // 2)
+    #             if M["m00"] > 0:
+    #                 # Calculate centroid of the green mask (cX is pixel column)
+    #                 cX = int(M["m10"] / M["m00"])
+    #                 # Adjust cX by the cropped height offset to center against the full width
+    #                 # error relative to the center of the *original* camera frame width
+    #                 error = cX - (width // 2)
 
-                    # Check for completion
-                    if abs(error) < error_threshold:
-                        print("Green carpet alignment complete.")
-                        self.stop_motor()
-                        break
+    #                 # Check for completion
+    #                 if abs(error) < error_threshold:
+    #                     print("Green carpet alignment complete.")
+    #                     self.stop_motor()
+    #                     break
 
-                    # P-control for turning
-                    turn_speed = Kp * error
+    #                 # P-control for turning
+    #                 turn_speed = Kp * error
                     
-                    # Apply differential speed (forward_speed is common)
-                    self.set_robot_velocity(forward_speed + turn_speed, forward_speed - turn_speed)
-                    self.step(self.time_step)
-                else: 
-                    # Green carpet lost or not visible enough to align
-                    self.stop_motor()
-                    print("Green carpet lost during alignment.")
-                    break
+    #                 # Apply differential speed (forward_speed is common)
+    #                 self.set_robot_velocity(forward_speed + turn_speed, forward_speed - turn_speed)
+    #                 self.step(self.time_step)
+    #             else: 
+    #                 # Green carpet lost or not visible enough to align
+    #                 self.stop_motor()
+    #                 print("Green carpet lost during alignment.")
+    #                 break
 
     def mark_green_carpet_permanently(self, min_pixel_threshold=10, new_area_threshold=0.5):
         """
