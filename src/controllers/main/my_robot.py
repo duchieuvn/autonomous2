@@ -57,7 +57,7 @@ class MyRobot(Supervisor):
         # Stuck detection for follow_local_target (other_branch)
         self.follow_target_last_position = None
         self.follow_target_stuck_count = 0
-        self.follow_target_position_threshold = 0.05  # meters - minimum movement to not be considered stuck
+        self.follow_target_position_threshold = 0.005  # meters - minimum movement to not be considered stuck
         self.follow_target_stuck_threshold = 25  # number of calls without movement to consider stuck
         
         # --- Green carpet state (initialized to sensible defaults) ---
@@ -220,7 +220,7 @@ class MyRobot(Supervisor):
     def lidar_update_loop(self):
         """Continuous lidar mapping loop."""
         # Wait for sensors to initialize
-        time.sleep(1.0)
+        # time.sleep(1.0)
         
         while self.lidar_thread_running:
             try:
@@ -316,7 +316,8 @@ class MyRobot(Supervisor):
     def is_turning(self):
         left_speed = self.motors['fl'].getVelocity()
         right_speed = self.motors['fr'].getVelocity()
-        return abs(left_speed - right_speed) > 0.08
+        turning = abs(left_speed - right_speed) > 0.20
+        return turning
 
 
     # def is_turning(self):
@@ -360,6 +361,7 @@ class MyRobot(Supervisor):
             self.last_turn = 'left'
         if right_speed > left_speed:
             self.last_turn = 'right'
+        
 
     def velocity_to_wheel_speeds(self, v, w):
         v_left = v - (self.axle_length / 2.0) * w
@@ -438,22 +440,26 @@ class MyRobot(Supervisor):
         self.set_robot_velocity(8, -8)
         self.step(s)
         self.stop_motor()
+        
 
     def turn_left_milisecond(self, s=200):
         self.set_robot_velocity(-8, 8)
         self.step(s)
         self.stop_motor()
+        
 
     def move_backward_milisecond(self, s=300):
         self.set_robot_velocity(-7, -7)
         self.step(s)
         self.stop_motor()
+        
 
     def adapt_direction(self):
         count = 0
         distances = self.get_distances()
         # (diff_other_branch)
         if np.mean(distances) < 0.3: # other branch is 0.16
+            
             self.move_backward_milisecond(50)
             return
 
@@ -696,6 +702,7 @@ class MyRobot(Supervisor):
                 break
 
         self.stop_motor()
+        
 
     def mark_on_map(self, distance_cm, color='blue'):
         # Use provided distance if available; otherwise attempt to estimate.
@@ -704,18 +711,15 @@ class MyRobot(Supervisor):
 
         # If we still couldn't estimate the distance, skip marking.
         if distance_cm is None:
-            print(f"[info] No {color} column distance available; skipping mark_on_map")
             return
 
         if distance_cm < COLOR_DETECTION_DEPTH_THRESHOLD:
-            print(f"column {color} pinned at distance {distance_cm} cm")
             if color == 'blue':
                 self.start_point = tuple(self.get_map_position()) # Blue
             elif color == 'yellow':
                 self.end_point = tuple(self.get_map_position())  # Yellow
 
     def align_to_red_wall(self):
-        print("Aligning to red wall by moving backward...")
 
         # PD controller constants
         Kp = ALIGN_RED_WALL_KP
@@ -746,7 +750,6 @@ class MyRobot(Supervisor):
 
                 # Check for completion
                 if (abs(error) < error_threshold and is_middle):
-                    print("Alignment complete.")
                     self.stop_motor()
                     break
 
@@ -818,7 +821,6 @@ class MyRobot(Supervisor):
         hsv_img = self.get_hsv_image()
         
         if depth_img is None or hsv_img is None:
-            print(f"[Error] Failed to get sensor data for {color} column detection.")
             return None
         
         # Segment column in image
@@ -835,10 +837,9 @@ class MyRobot(Supervisor):
             # We often get invalid depth when very close.
             # If the column occupies a lot of pixels, treat it as "close enough" and allow marking.
             area_ratio = float(np.count_nonzero(column_mask)) / float(column_mask.size)
-            print("Invalid depth")
             if area_ratio > 0.20:  # close in image -> likely right in front
                 return 0.0  # force "close" behavior in caller
-            return None
+            return 0.0
         
         # Calculate horizontal distance using Pythagorean theorem
         max_depth_cm = float(np.max(valid_depths))
@@ -945,17 +946,18 @@ class MyRobot(Supervisor):
         return False
     
     def slowly_360(self):
-        # print("Performing slow 360-degree rotation for mapping...")
         self.set_robot_velocity(5, -5)
         self.step(4000)
         self.stop_motor()
+        
 
     def slowly_360_scan(self):
         # rotate ~360 while allowing detection loop to run
         # rotate while actively checking and marking columns
+        print("[Action] slowly_360_scan start")
         self.set_robot_velocity(2, -2)
 
-        for _ in range(70):  # tune (70 * TIME_STEP) to get ~360 degrees
+        for _ in range(280):  # tune (70 * TIME_STEP) to get ~360 degrees
             if self.step(self.time_step) == -1:
                 break
 
@@ -966,6 +968,7 @@ class MyRobot(Supervisor):
                 pass
 
         self.stop_motor()
+        
 
     def handle_frontier_exploration(self, count, map_diff):
         frontier_regions = []
@@ -1062,7 +1065,7 @@ class MyRobot(Supervisor):
             if self.step(self.time_step) == -1:
                 break
 
-        print(f"[Column] MARKED {color}")
+        print(f"[Action] force_mark_column_if_visible: marked {color} column")
         return True
 
 
@@ -1171,6 +1174,13 @@ class MyRobot(Supervisor):
 
                         # 5) Move away
                         self.turn_right_milisecond(350)
+
+                        # ✅ DROP CURRENT FRONTIER/PATH so we don't retry it next loop
+                        active_path = None
+                        active_frontier = None
+                        chosen_frontier = None
+                        path_to_frontier = None
+
                         continue
 
                         
@@ -1225,7 +1235,7 @@ class MyRobot(Supervisor):
             if count % 20 == 0:
                 try:
                     # Use the larger min_pixel_threshold to ensure robot is close enough
-                    marked = self.mark_green_carpet_permanently(min_pixel_threshold=7000)
+                    marked = self.mark_green_carpet_permanently(min_pixel_threshold=10)
                     if marked:
                         # If a mark was made, update map with lidar points to protect new area
                         try:
@@ -1520,7 +1530,7 @@ class MyRobot(Supervisor):
                     # 5) Move away a bit
                     self.turn_right_milisecond(350)
 
-                # 🔵🟡 Column: PASSIVE only (consume signal; keep moving)
+                  # 🔵🟡 Column: PASSIVE only (consume signal; keep moving)
                 if isinstance(signal, tuple) and len(signal) >= 2 and signal[0] == 'column':
                     _, color = signal
                     # Passive update only (no turning, no stopping)
@@ -1536,12 +1546,29 @@ class MyRobot(Supervisor):
                 # --------------------------------------------------
                 if timestep_counter % CARPET_CHECK_EVERY == 0:
                     try:
-                        marked = self.mark_green_carpet_permanently(min_pixel_threshold=7000)
+                        marked = self.mark_green_carpet_permanently(min_pixel_threshold=10)
                         if marked:
-                            # Optional: brief settle to let lidar/map protect region
-                            for _ in range(2):
+                            print("[Green Carpet] Marked during frontier_following -> STOP + REPLAN now")
+                            self.stop_motor()
+
+                            # Let lidar thread + map settle a moment
+                            for _ in range(MAP_UPDATE_WAIT_STEPS):
                                 if self.step(self.time_step) == -1:
-                                    break
+                                    return False
+
+                            # Replan to same fixed goal using updated map
+                            current_start = self.get_map_position()
+                            new_path = self.map_object.find_path_for_frontier(current_start, frontier_goal)
+
+                            if new_path and len(new_path) > 5:
+                                current_path = list(new_path)
+                                target_index = 5
+                                # IMPORTANT: restart inner loop using the new path immediately
+                                break
+                            else:
+                                print("[Green Carpet] Replan failed right after marking; dropping this frontier")
+                                return False
+
                     except Exception as e:
                         print(f"[Green Carpet] marking attempt failed during frontier_following: {e}")
 
@@ -1613,11 +1640,45 @@ class MyRobot(Supervisor):
                 # 6) Follow local target
                 # --------------------------------------------------
                 reached, is_stuck = self.follow_local_target(target)
-                if is_stuck or min(self.get_distances()) < 0.05:
+                if is_stuck:
+                    print("[Frontier] Local following stuck -> recover + replan")
                     self.stop_motor()
-                    self.turn_right_milisecond(random.randint(200, 400))
-                    self.move_backward_milisecond()
-                    return False
+
+                    # 1) recover
+                    try:
+                        self.recover_from_stuck()
+                    except Exception:
+                        pass
+
+                    # 2) wait for lidar/map update
+                    for _ in range(MAP_UPDATE_WAIT_STEPS):
+                        if self.step(self.time_step) == -1:
+                            break
+
+                    # 3) replan to SAME frontier_goal
+                    try:
+                        current_start = self.get_map_position()
+                        if use_global_planner:
+                            new_path = self.map_object.find_path(tuple(current_start), tuple(frontier_goal))
+                        else:
+                            new_path = self.map_object.find_path_for_frontier(current_start, frontier_goal)
+
+                        if new_path and len(new_path) > 5:
+                            print("[Frontier] Replanned after stuck")
+                            current_path = list(new_path)
+                            target_index = 5
+                            break  # exit inner while, outer loop will pick new target from updated path
+                        else:
+                            print("[Frontier] Replan failed after stuck, dropping frontier")
+                            return False
+                    except Exception as e:
+                        print(f"[Frontier] Replan error after stuck: {e}")
+                        return False
+                # if is_stuck:
+                #     self.stop_motor()
+                #     self.turn_right_milisecond(random.randint(200, 400))
+                #     self.move_backward_milisecond()
+                #     # return False
                 if reached:
                     break
 
@@ -1787,20 +1848,77 @@ class MyRobot(Supervisor):
                         self.stop_motor()
                         return False
 
-                # Column signals are passive (consume only)
+                # Column signals: active mark if very close, otherwise passive estimation
                 if isinstance(signal, tuple) and len(signal) >= 2 and signal[0] == "column":
                     _, color = signal
                     try:
-                        self.update_column_estimation_from_view(color)
-                    except Exception:
-                        pass
+                        center_ratio = 0.0
+                        try:
+                            center_ratio = self.get_column_center_ratio(color)
+                        except Exception:
+                            pass
+
+                        depth_close = False
+                        try:
+                            d = self.estimate_column_distance(color)
+                            if d is not None and d < COLOR_DETECTION_DEPTH_THRESHOLD:
+                                depth_close = True
+                        except Exception:
+                            pass
+
+                        lidar_close = False
+                        try:
+                            if self.get_min_front_distance() < 0.35:
+                                lidar_close = True
+                        except Exception:
+                            pass
+
+                        if center_ratio >= 0.20 or depth_close or lidar_close:
+                            print(f"[Column] Active mark (final) triggered: color={color}, center_ratio={center_ratio:.3f}, depth_close={depth_close}, lidar_close={lidar_close}")
+                            self.stop_motor()
+                            for _ in range(10):
+                                if not self.is_turning():
+                                    break
+                                if self.step(self.time_step) == -1:
+                                    break
+
+                            try:
+                                self.center_column_in_view(color)
+                            except Exception as e:
+                                print(f"[Column] center_column_in_view failed (final): {e}")
+
+                            try:
+                                dist = self.estimate_column_distance(color)
+                            except Exception as e:
+                                print(f"[Column] estimate_column_distance failed (final): {e}")
+                                dist = None
+
+                            try:
+                                if dist is not None:
+                                    self.mark_on_map(dist, color=color)
+                                else:
+                                    if center_ratio >= 0.20:
+                                        self.mark_column(color)
+                            except Exception as e:
+                                print(f"[Column] mark failed (final): {e}")
+
+                            for _ in range(5):
+                                if self.step(self.time_step) == -1:
+                                    break
+                        else:
+                            try:
+                                self.update_column_estimation_from_view(color)
+                            except Exception:
+                                pass
+                    except Exception as e:
+                        print(f"[Column] Column signal handling error (final): {e}")
 
                 # -----------------------------
                 # (2) Green carpet marking (optional)
                 # -----------------------------
                 if timestep_counter % CARPET_CHECK_EVERY == 0:
                     try:
-                        self.mark_green_carpet_permanently(min_pixel_threshold=7000)
+                        self.mark_green_carpet_permanently(min_pixel_threshold=10)
                     except Exception:
                         pass
 
@@ -2383,7 +2501,7 @@ class MyRobot(Supervisor):
                     print("Green carpet lost during alignment.")
                     break
 
-    def mark_green_carpet_permanently(self, min_pixel_threshold=1000, new_area_threshold=0.5):
+    def mark_green_carpet_permanently(self, min_pixel_threshold=10, new_area_threshold=0.5):
         """
         Checks if the detected green carpet is close enough and is either a new area
         or a significant expansion of a previously marked area, then aligns and marks it permanently.
