@@ -180,42 +180,63 @@ class MyRobot(Supervisor):
         time.sleep(1.0)
         
         while self.camera_thread_running:
-            try:
-                # Check if camera is ready
-                if self.camera_rgb is None:
-                    time.sleep(0.5)
-                    continue
-                    
-                # Only write to shared variable if it's None (main thread has processed previous signal)
-                with self.detection_lock:
-                    if self.camera_detection_signal is None:
-                        # Check for red wall
-                        red_wall = self.there_is_red_wall()
-                        if red_wall:
-                            self.camera_detection_signal = 'red_wall'
+            # Check if camera is ready
+            if self.camera_rgb is None:
+                time.sleep(0.5)
+                continue
+                
+            # Only write to shared variable if it's None (main thread has processed previous signal)
+            with self.detection_lock:
+                if self.camera_detection_signal is None:
+                    # Check for red wall
+                    red_wall = self.there_is_red_wall()
+                    if red_wall:
+                        self.camera_detection_signal = 'red_wall'
+                        continue
+                    #(diff_other_branch)
+                    # Green carpet has priority — skip column detection (diff_other_branch)
+                    if self.green_carpet_active:
+                        # time.sleep(0.1)
+                        continue
+
+                    # Check for columns
+                    color = self.detect_column()
+                    if color:
+                        if color == 'blue' and self.start_point is not None:
                             continue
-                        #(diff_other_branch)
-                        # Green carpet has priority — skip column detection (diff_other_branch)
-                        if self.green_carpet_active:
-                            # time.sleep(0.1)
+                        elif color == 'yellow' and self.end_point is not None:
                             continue
 
-                        # Check for columns
-                        color = self.detect_column()
-                        #(diff_other_branch)
-                        if color:
-                            if color == 'blue' and self.start_point is not None:
-                                continue
-                            if color == 'yellow' and self.end_point is not None:
-                                continue
+                        update_count = self.blue_pos_update_count if color == 'blue' else self.yellow_pos_update_count
+                        column_mask = utils.segment_color(self.get_hsv_image(), color)
+                        column_distance = self.estimate_column_distance(color) 
+                        
+                        if self.column_close(column_mask):
+                            self.center_column_in_view(color)
+                            print(f"Column {color} is close", column_distance)
+                            self.mark_column(color)
+                            self.turn_right_milisecond(600)
+                        
+                        elif update_count < 5:
                             self.camera_detection_signal = ('column', color)
-                            continue
-                                    
-                time.sleep(0.5)  # Check every 500ms
+                            self.center_column_in_view(color)
+                            ratio = self.get_column_center_ratio(color)
+                            if ratio > 0.04:
+                                column_distance = self.estimate_column_distance(color) 
+                                if column_distance is not None:
+                                    column_position = self.position_ahead(column_distance / 100) 
+                                    column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
+                                    self.update_column_estimation(color, column_map_position)
+                                    print(f"Updated {color} column position")
+                                    if color == 'blue':
+                                        self.blue_pos_update_count += 1
+                                    elif color == 'yellow':
+                                        self.yellow_pos_update_count += 1
+                                
+                                
+            time.sleep(0.5)  # Check every 500ms
 
-            except Exception as e:
-                print(f"[Detection] Error in detection loop: {e}")
-                time.sleep(1.0)
+            
 
     def lidar_update_loop(self):
         """Continuous lidar mapping loop."""
@@ -983,6 +1004,7 @@ class MyRobot(Supervisor):
             if random.random() < 0.6:
                 chosen_frontier = self.select_frontier_near_column()
                 chasing_column = (chosen_frontier is not None)
+                print("Frontire near column---")
 
             # Fallback to existing selection logic if none chosen
             if chosen_frontier is None:
@@ -1000,7 +1022,8 @@ class MyRobot(Supervisor):
                 if path_to_frontier:
                     success = self.frontier_following(path_to_frontier)
                     if success and chasing_column and (self.start_point is None or self.end_point is None):
-                        self.slowly_360_scan()
+                        self.slowly_360()
+                        
 
         return frontier_regions, chosen_frontier, path_to_frontier
     
@@ -1187,52 +1210,9 @@ class MyRobot(Supervisor):
                         # # print('Done align to red wall')
                         # random_duration = random.randint(500, 700)
                         # self.turn_right_milisecond(random_duration)
-                    # 🟦🟨 Column detected (MAIN thread handles motion + marking)
-                    if isinstance(signal, tuple) and len(signal) >= 2 and signal[0] == 'column':
-                        _, color = signal
-
-                        # Skip if already set
-                        if color == 'blue' and self.start_point is not None:
-                            continue
-                        if color == 'yellow' and self.end_point is not None:
-                            continue
-
-                        hsv = self.get_hsv_image()
-                        if hsv is None:
-                            continue
-
-                        column_mask = utils.segment_color(hsv, color)
-
-                        # If close: center + mark as actual start/end
-                        if self.column_close(column_mask):
-                            self.stop_motor()
-                            self.center_column_in_view(color)
-                            dist = self.estimate_column_distance(color)
-                            # Prefer mark_on_map (uses distance threshold), fallback to mark_column
-                            if dist is not None:
-                                self.mark_on_map(dist, color=color)
-                            else:
-                                self.mark_column(color)
-                            self.turn_right_milisecond(600)
-
-                        # If far: update estimation (doesn't finalize start/end)
-                        else:
-                            self.stop_motor()
-                            self.center_column_in_view(color)
-                            ratio = self.get_column_center_ratio(color)
-                            if ratio > 0.08:
-                                dist = self.estimate_column_distance(color)
-                                if dist is not None:
-                                    wp = self.position_ahead(dist / 100.0)
-                                    mp = self.convert_to_map_coordinates(wp[0], wp[1])
-                                    self.update_column_estimation(color, mp)
-                                    if color == 'blue':
-                                        self.blue_pos_update_count += 1
-                                    else:
-                                        self.yellow_pos_update_count += 1
-                            self.turn_right_milisecond(600)
+                    
             # --- Periodic green-carpet marking (low-frequency, with cooldown) ---
-            if count % 20 == 0:
+            if count % 200 == 0:
                 try:
                     # Use the larger min_pixel_threshold to ensure robot is close enough
                     marked = self.mark_green_carpet_permanently(min_pixel_threshold=10)
@@ -1585,7 +1565,6 @@ class MyRobot(Supervisor):
                 front_dist = self.get_min_front_distance()
                 if front_dist < OBSTACLE_THRESHOLD:
                     print(f"[Frontier] Obstacle ahead at {front_dist:.2f} m")
-
                     self.stop_motor()
 
                     back_speed = 0.12  # m/s
@@ -1604,36 +1583,39 @@ class MyRobot(Supervisor):
                         if self.step(self.time_step) == -1:
                             break
 
+                    self.lidar_update_map()
+                    return False
+
                     # replan with updated map
-                    try:
-                        current_start = self.get_map_position()
-                        new_path = self.map_object.find_path_for_frontier(current_start, frontier_goal)
-                        if new_path:
-                            print("[Frontier] Replanned after obstacle")
-                            current_path = new_path
-                            target_index = 5
-                            break
-                        else:
-                            print("[Frontier] Replan failed, dropping frontier")
-                            return False
-                    except Exception as e:
-                        print(f"[Frontier] Replan error: {e}")
-                        return False
+                    # try:
+                    #     current_start = self.get_map_position()
+                    #     new_path = self.map_object.find_path_for_frontier(current_start, frontier_goal)
+                    #     if new_path:
+                    #         print("[Frontier] Replanned after obstacle")
+                    #         current_path = new_path
+                    #         target_index = 5
+                    #         break
+                    #     else:
+                    #         print("[Frontier] Replan failed, dropping frontier")
+                    #         return False
+                    # except Exception as e:
+                    #     print(f"[Frontier] Replan error: {e}")
+                    #     return False
 
                 # --------------------------------------------------
                 # 4) PERIODIC TIMESTEP-BASED REPLANNING
                 # --------------------------------------------------
-                if timestep_counter % replan_interval == 0:
-                    try:
-                        current_start = self.get_map_position()
-                        new_path = self.map_object.find_path_for_frontier(current_start, frontier_goal)
-                        if new_path and len(new_path) > 5:
-                            print("[Replan] Periodic path update")
-                            current_path = new_path
-                            target_index = 5
-                            break
-                    except Exception as e:
-                        print(f"[Replan] Failed: {e}")
+                # if timestep_counter % replan_interval == 0:
+                #     try:
+                #         current_start = self.get_map_position()
+                #         new_path = self.map_object.find_path_for_frontier(current_start, frontier_goal)
+                #         if new_path and len(new_path) > 5:
+                #             print("[Replan] Periodic path update")
+                #             current_path = new_path
+                #             target_index = 5
+                #             break
+                #     except Exception as e:
+                #         print(f"[Replan] Failed: {e}")
 
                 # --- Visualization update (GridMap thread draws these) ---
                 with self.map_object.vis_lock:

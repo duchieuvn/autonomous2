@@ -38,6 +38,7 @@ class GridMap():
         self.visualization_thread = None
         self.vis_lock = threading.Lock()
         self.clock = None
+        self.font = None
         self.color_map = {
             FREESPACE: (255, 255, 255),   # freespace: white
             OBSTACLE: (0, 0, 0),         # obstacle: black
@@ -413,9 +414,12 @@ class GridMap():
     def _init_pygame(self):
         """Initialize pygame display for visualization."""
         pygame.init()
+        pygame.font.init()
         self.pygame_screen = pygame.display.set_mode(self.window_size)
         pygame.display.set_caption("Grid Map Visualizer - Live")
         self.clock = pygame.time.Clock()
+        # A small, readable font for overlay text
+        self.font = pygame.font.SysFont("Arial", 16)
     
     def _grid_to_display(self, grid_map):
         """Convert grid map to RGB display image using color_map.
@@ -549,6 +553,8 @@ class GridMap():
                 robot_pos = self.robot_position
                 target_pos = self.target_position
                 columns = self.column_points.copy() if self.column_points else []
+                start_point = getattr(self.robot, 'start_point', None) if self.robot else None
+                end_point = getattr(self.robot, 'end_point', None) if self.robot else None
             
             # Resize and blit to screen
             resized = cv2.resize(display_img, self.window_size, interpolation=cv2.INTER_NEAREST)
@@ -575,6 +581,19 @@ class GridMap():
             # Draw robot last (on top) to ensure visibility
             if robot_pos:
                 self._draw_point(robot_pos[0], robot_pos[1], color=(0, 0, 255), radius=6)
+
+            # Overlay start/end coordinates when available
+            if self.font:
+                overlay_y = 8
+                if start_point is not None:
+                    start_xy = tuple(int(v) for v in start_point)
+                    text_surface = self.font.render(f"Start: {start_xy}", True, (0, 0, 255))
+                    self.pygame_screen.blit(text_surface, (8, overlay_y))
+                    overlay_y += text_surface.get_height() + 4
+                if end_point is not None:
+                    end_xy = tuple(int(v) for v in end_point)
+                    text_surface = self.font.render(f"End:   {end_xy}", True, (255, 200, 0))
+                    self.pygame_screen.blit(text_surface, (8, overlay_y))
             
             # Update display
             pygame.display.flip()
