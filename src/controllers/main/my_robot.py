@@ -1005,8 +1005,7 @@ class MyRobot(Supervisor):
         return False
     
     def slowly_360(self):
-        print("check signal  360")
-        self.set_robot_velocity(2, -2)
+        self.set_robot_velocity(3, -3)
         self.step(8000)
         self.stop_motor()
         
@@ -1678,6 +1677,7 @@ class MyRobot(Supervisor):
             self.start_camera_thread()
         if not self.lidar_thread_running:
             self.start_lidar_thread()
+            print("[FinalPath] Restarted lidar thread")
 
         if debug_vis:
             try:
@@ -2470,75 +2470,10 @@ class MyRobot(Supervisor):
             # Continue backward
             self.set_robot_velocity(back_speed, back_speed)
 
-
-    # def align_to_green_carpet(self):
-    #         """
-    #         Aligns the robot to center the detected green carpet in the camera view.
-    #         Uses a P-controller based on the centroid of the green mask.
-    #         """
-    #         print("Aligning to green carpet...")
-
-    #         # P controller constants
-    #         Kp = 0.015  # Proportional gain for turning (Increased gain for faster reaction)
-    #         error_threshold = 10  # Pixel tolerance for centering
-            
-    #         # Moderate forward speed to maintain momentum while aligning
-    #         forward_speed = 3.0  
-
-    #         while self.step(self.time_step) != -1:
-    #             hsv_img = self.get_hsv_image()
-    #             if hsv_img is None:
-    #                 self.stop_motor()
-    #                 break
-
-    #             height, width, _ = hsv_img.shape
-                
-    #             # Use the bottom half image for reliable ground-level detection
-    #             h_start = int(height * 0.5) 
-    #             hsv_cropped = hsv_img[h_start:, :]
-
-    #             # Segment green color (using the same tuned values as get_green_carpet_points)
-    #             lower_green = np.array([40, 40, 40])
-    #             upper_green = np.array([80, 255, 255])
-    #             green_mask = cv2.inRange(hsv_cropped, lower_green, upper_green)
-                
-    #             M = cv2.moments(green_mask)
-                
-    #             if M["m00"] > 0:
-    #                 # Calculate centroid of the green mask (cX is pixel column)
-    #                 cX = int(M["m10"] / M["m00"])
-    #                 # Adjust cX by the cropped height offset to center against the full width
-    #                 # error relative to the center of the *original* camera frame width
-    #                 error = cX - (width // 2)
-
-    #                 # Check for completion
-    #                 if abs(error) < error_threshold:
-    #                     print("Green carpet alignment complete.")
-    #                     self.stop_motor()
-    #                     break
-
-    #                 # P-control for turning
-    #                 turn_speed = Kp * error
-                    
-    #                 # Apply differential speed (forward_speed is common)
-    #                 self.set_robot_velocity(forward_speed + turn_speed, forward_speed - turn_speed)
-    #                 self.step(self.time_step)
-    #             else: 
-    #                 # Green carpet lost or not visible enough to align
-    #                 self.stop_motor()
-    #                 print("Green carpet lost during alignment.")
-    #                 break
-
     def mark_green_carpet_permanently(self, min_pixel_threshold=10, new_area_threshold=0.5):
         """
         Checks if the detected green carpet is close enough and is either a new area
         or a significant expansion of a previously marked area, then aligns and marks it permanently.
-
-        Optimized flow:
-        1. Check if it has been marked before (quick pre-check) - avoids expensive alignment
-        2. If not yet marked, align to green carpet
-        3. Gather camera and depth information again (post-alignment)
-        4. Mark on the map
 
         Args:
             min_pixel_threshold (int): Minimum number of pixels required to consider the carpet 'close'.
@@ -2549,123 +2484,94 @@ class MyRobot(Supervisor):
         """
         self.green_carpet_active = True
         
-        # --- STEP 1: PRE-ALIGNMENT CHECK - Has this been marked before? ---
-        # Get initial detection (before expensive alignment operation)
-        initial_map_points = self.get_green_carpet_points()
-        initial_detection_size = initial_map_points.shape[0]
-
-        if initial_detection_size < min_pixel_threshold:
-            self.green_carpet_active = False
-            return False
-
-        # Prepare initial data for pre-check
-        initial_pts = initial_map_points.astype(np.int32)
-        initial_y_indices = initial_pts[:, 1]
-        initial_x_indices = initial_pts[:, 0]
-        H, W = self.grid_map.shape
-        valid = (initial_x_indices >= 0) & (initial_x_indices < W) & (initial_y_indices >= 0) & (initial_y_indices < H)
-        initial_x_indices = initial_x_indices[valid]
-        initial_y_indices = initial_y_indices[valid]
-
-        if initial_x_indices.size == 0:
-            self.green_carpet_active = False
-            return False
-
-        initial_centroid = np.array([np.mean(initial_x_indices), np.mean(initial_y_indices)])
-
-        # Check 1a: Geographic cooldown (patch-based proximity check)
-        closest_patch_index = -1
-        min_distance = float('inf')
-        
-        for i, (old_x, old_y, old_size) in enumerate(self.green_carpet_patches):
-            old_centroid = np.array([old_x, old_y])
-            distance_to_old_mark = np.linalg.norm(initial_centroid - old_centroid)
-            
-            if distance_to_old_mark < min_distance:
-                min_distance = distance_to_old_mark
-                closest_patch_index = i
-        
-        if closest_patch_index != -1 and min_distance < self.green_carpet_proximity_threshold:
-            # Current detection is close to a known patch
-            old_size = self.green_carpet_patches[closest_patch_index][2]
-            
-            # Only proceed if this is a significant size increase (expansion)
-            if initial_detection_size <= old_size * 1.2:
-                # Too close and not large enough: Skip marking (already marked)
-                self.green_carpet_active = False
-                return False
-        
-        # Check 1b: Cell-level newness check
-        try:
-            green_protect_mask = (self.grid_map == GREEN_CARPET)
-        except NameError:
-            green_protect_mask = np.zeros_like(self.grid_map, dtype=bool)
-
-        newly_detected_cells = ~green_protect_mask[initial_y_indices, initial_x_indices]
-        num_new_cells = np.sum(newly_detected_cells)
-        newness_ratio = num_new_cells / initial_detection_size
-        
-        if newness_ratio < new_area_threshold:
-            # Already marked (less than 50% is new)
-            self.green_carpet_active = False
-            return False
-        
-        # --- STEP 2: ALIGNMENT (only if area is NEW) ---
+        # --- STEP 0: ALIGNMENT (CALIBRATION) FIRST ---
+        print("[Green Carpet] Aligning to green carpet before detection...")
         self.align_to_green_carpet()
         self.stop_motor()
-        time.sleep(0.2)
-
-        # --- STEP 3: POST-ALIGNMENT DETECTION - Gather fresh camera and depth information ---
+        
+        # --- STEP 1: Detect Green Carpet Points & Proximity Check (POST-ALIGNMENT) ---
         current_map_points = self.get_green_carpet_points() 
         current_detection_size = current_map_points.shape[0]
 
         if current_detection_size < min_pixel_threshold:
             self.green_carpet_active = False
+            print(f"[Green Carpet] Detection too small after alignment ({current_detection_size} < {min_pixel_threshold})")
             return False
 
-        # Data preparation for final marking (post-alignment)
+        # --- Data Preparation ---
         pts = current_map_points.astype(np.int32)
         y_indices = pts[:, 1]
         x_indices = pts[:, 0]
+        H, W = self.grid_map.shape
         valid = (x_indices >= 0) & (x_indices < W) & (y_indices >= 0) & (y_indices < H)
         x_indices = x_indices[valid]
         y_indices = y_indices[valid]
 
         if x_indices.size == 0:
             self.green_carpet_active = False
+            print("[Green Carpet] No valid points in map bounds after alignment")
             return False
 
         current_detection_size = int(x_indices.size)
         current_centroid = np.array([np.mean(x_indices), np.mean(y_indices)])
 
-        # --- STEP 4: MARK ON MAP (using post-alignment data) ---
-        try:
-            # Create a temporary mask to dilate the detected area
-            temp_mask = np.zeros_like(self.grid_map, dtype=np.uint8)
-            temp_mask[y_indices, x_indices] = 1
+        # --- STEP 2: Multiple Patch Cooldown Check & Expansion Rule ---
+        closest_patch_index = -1
+        min_distance = float('inf')
+        
+        for i, (old_x, old_y, old_size) in enumerate(self.green_carpet_patches):
+            old_centroid = np.array([old_x, old_y])
+            distance_to_old_mark = np.linalg.norm(current_centroid - old_centroid)
             
-            # Dilate the mask to expand the marked area (buffer zone for easier avoidance)
-            kernel_size = 5  # Adjust this to control expansion size (larger = bigger buffer)
-            kernel = np.ones((kernel_size, kernel_size), np.uint8)
-            dilated_mask = cv2.dilate(temp_mask, kernel, iterations=1)
+            if distance_to_old_mark < min_distance:
+                min_distance = distance_to_old_mark
+                closest_patch_index = i
+        
+        if closest_patch_index != -1 and min_distance < self.green_carpet_proximity_threshold:
+            # Current detection is close to a known patch (Geographical Cooldown)
+            old_size = self.green_carpet_patches[closest_patch_index][2]
             
-            # Extract expanded indices from dilated mask
-            expanded_y_indices, expanded_x_indices = np.where(dilated_mask == 1)
-            
-            # Mark the expanded area on the grid map
-            self.grid_map[expanded_y_indices, expanded_x_indices] = int(GREEN_CARPET)
-            
-            # Update or add patch record
-            if closest_patch_index != -1 and min_distance < self.green_carpet_proximity_threshold:
-                # Update existing patch with new size (expansion case)
+            # Apply Expansion Rule: Only proceed if this is a significant size increase
+            if current_detection_size > old_size * 1.2: 
+                # EXPANSION: Update the record for the old patch with the new, larger size
                 self.green_carpet_patches[closest_patch_index] = (current_centroid[0], current_centroid[1], current_detection_size)
+                print(f"[Green Carpet] Expanding patch at [{old_x:.0f} {old_y:.0f}]. New size: {current_detection_size}")
             else:
-                # Add as genuinely NEW patch
+                # Too close and not large enough: Skip marking
+                self.green_carpet_active = False
+                print(f"[Green Carpet] Skipping mark. Too close to known patch and not large enough")
+                return False 
+        
+        # --- STEP 3: Newness Check ---
+        try:
+            green_protect_mask = (self.grid_map == GREEN_CARPET)
+        except NameError:
+            green_protect_mask = np.zeros_like(self.grid_map, dtype=bool)
+
+        newly_detected_cells = ~green_protect_mask[y_indices, x_indices]
+        num_new_cells = np.sum(newly_detected_cells)
+        newness_ratio = num_new_cells / current_detection_size
+        
+        if newness_ratio < new_area_threshold:
+            self.green_carpet_active = False
+            print(f"[Green Carpet] Area already mostly marked (newness_ratio: {newness_ratio:.2f})")
+            return False
+
+        # --- STEP 4: Final Permanent Mark (AFTER ALIGNMENT) ---
+        print(f"[Green Carpet] Marking carpet area ({current_detection_size} pixels)...")
+        
+        # Grid map update with validated points
+        try:
+            self.grid_map[y_indices, x_indices] = int(GREEN_CARPET)
+            
+            # If this was a genuinely NEW patch, add it to the list.
+            if min_distance >= self.green_carpet_proximity_threshold:
                 self.green_carpet_patches.append((current_centroid[0], current_centroid[1], current_detection_size))
             
             self.last_green_mark_time = time.time()
             self.last_green_carpet_points = [(int(pts[i, 0]), int(pts[i, 1])) for i in range(len(pts))]
 
+            print(f"[Map Update] Successfully marked new persistent green carpet ({current_detection_size} pixels).")
             self.green_carpet_active = False
             return True
             
@@ -2673,6 +2579,151 @@ class MyRobot(Supervisor):
             print(f"[warning] Failed to apply permanent green mark: {e}")
             self.green_carpet_active = False
             return False
+
+    # def mark_green_carpet_permanently(self, min_pixel_threshold=10, new_area_threshold=0.5):
+    #     """
+    #     Checks if the detected green carpet is close enough and is either a new area
+    #     or a significant expansion of a previously marked area, then aligns and marks it permanently.
+
+    #     Optimized flow:
+    #     1. Check if it has been marked before (quick pre-check) - avoids expensive alignment
+    #     2. If not yet marked, align to green carpet
+    #     3. Gather camera and depth information again (post-alignment)
+    #     4. Mark on the map
+
+    #     Args:
+    #         min_pixel_threshold (int): Minimum number of pixels required to consider the carpet 'close'.
+    #         new_area_threshold (float): Minimum proportion of points that must be unmarked for the area to be considered 'new'.
+        
+    #     Returns:
+    #         bool: True if a permanent mark was successfully made, False otherwise.
+    #     """
+    #     self.green_carpet_active = True
+        
+    #     # --- STEP 1: PRE-ALIGNMENT CHECK - Has this been marked before? ---
+    #     # Get initial detection (before expensive alignment operation)
+    #     initial_map_points = self.get_green_carpet_points()
+    #     initial_detection_size = initial_map_points.shape[0]
+
+    #     if initial_detection_size < min_pixel_threshold:
+    #         self.green_carpet_active = False
+    #         return False
+
+    #     # Prepare initial data for pre-check
+    #     initial_pts = initial_map_points.astype(np.int32)
+    #     initial_y_indices = initial_pts[:, 1]
+    #     initial_x_indices = initial_pts[:, 0]
+    #     H, W = self.grid_map.shape
+    #     valid = (initial_x_indices >= 0) & (initial_x_indices < W) & (initial_y_indices >= 0) & (initial_y_indices < H)
+    #     initial_x_indices = initial_x_indices[valid]
+    #     initial_y_indices = initial_y_indices[valid]
+
+    #     if initial_x_indices.size == 0:
+    #         self.green_carpet_active = False
+    #         return False
+
+    #     initial_centroid = np.array([np.mean(initial_x_indices), np.mean(initial_y_indices)])
+
+    #     # Check 1a: Geographic cooldown (patch-based proximity check)
+    #     closest_patch_index = -1
+    #     min_distance = float('inf')
+        
+    #     for i, (old_x, old_y, old_size) in enumerate(self.green_carpet_patches):
+    #         old_centroid = np.array([old_x, old_y])
+    #         distance_to_old_mark = np.linalg.norm(initial_centroid - old_centroid)
+            
+    #         if distance_to_old_mark < min_distance:
+    #             min_distance = distance_to_old_mark
+    #             closest_patch_index = i
+        
+    #     if closest_patch_index != -1 and min_distance < self.green_carpet_proximity_threshold:
+    #         # Current detection is close to a known patch
+    #         old_size = self.green_carpet_patches[closest_patch_index][2]
+            
+    #         # Only proceed if this is a significant size increase (expansion)
+    #         if initial_detection_size <= old_size * 1.2:
+    #             # Too close and not large enough: Skip marking (already marked)
+    #             self.green_carpet_active = False
+    #             return False
+        
+    #     # Check 1b: Cell-level newness check
+    #     try:
+    #         green_protect_mask = (self.grid_map == GREEN_CARPET)
+    #     except NameError:
+    #         green_protect_mask = np.zeros_like(self.grid_map, dtype=bool)
+
+    #     newly_detected_cells = ~green_protect_mask[initial_y_indices, initial_x_indices]
+    #     num_new_cells = np.sum(newly_detected_cells)
+    #     newness_ratio = num_new_cells / initial_detection_size
+        
+    #     if newness_ratio < new_area_threshold:
+    #         # Already marked (less than 50% is new)
+    #         self.green_carpet_active = False
+    #         return False
+        
+    #     # --- STEP 2: ALIGNMENT (only if area is NEW) ---
+    #     self.align_to_green_carpet()
+    #     self.stop_motor()
+    #     time.sleep(0.2)
+
+    #     # --- STEP 3: POST-ALIGNMENT DETECTION - Gather fresh camera and depth information ---
+    #     current_map_points = self.get_green_carpet_points() 
+    #     current_detection_size = current_map_points.shape[0]
+
+    #     if current_detection_size < min_pixel_threshold:
+    #         self.green_carpet_active = False
+    #         return False
+
+    #     # Data preparation for final marking (post-alignment)
+    #     pts = current_map_points.astype(np.int32)
+    #     y_indices = pts[:, 1]
+    #     x_indices = pts[:, 0]
+    #     valid = (x_indices >= 0) & (x_indices < W) & (y_indices >= 0) & (y_indices < H)
+    #     x_indices = x_indices[valid]
+    #     y_indices = y_indices[valid]
+
+    #     if x_indices.size == 0:
+    #         self.green_carpet_active = False
+    #         return False
+
+    #     current_detection_size = int(x_indices.size)
+    #     current_centroid = np.array([np.mean(x_indices), np.mean(y_indices)])
+
+    #     # --- STEP 4: MARK ON MAP (using post-alignment data) ---
+    #     try:
+    #         # Create a temporary mask to dilate the detected area
+    #         temp_mask = np.zeros_like(self.grid_map, dtype=np.uint8)
+    #         temp_mask[y_indices, x_indices] = 1
+            
+    #         # Dilate the mask to expand the marked area (buffer zone for easier avoidance)
+    #         kernel_size = 5  # Adjust this to control expansion size (larger = bigger buffer)
+    #         kernel = np.ones((kernel_size, kernel_size), np.uint8)
+    #         dilated_mask = cv2.dilate(temp_mask, kernel, iterations=1)
+            
+    #         # Extract expanded indices from dilated mask
+    #         expanded_y_indices, expanded_x_indices = np.where(dilated_mask == 1)
+            
+    #         # Mark the expanded area on the grid map
+    #         self.grid_map[expanded_y_indices, expanded_x_indices] = int(GREEN_CARPET)
+            
+    #         # Update or add patch record
+    #         if closest_patch_index != -1 and min_distance < self.green_carpet_proximity_threshold:
+    #             # Update existing patch with new size (expansion case)
+    #             self.green_carpet_patches[closest_patch_index] = (current_centroid[0], current_centroid[1], current_detection_size)
+    #         else:
+    #             # Add as genuinely NEW patch
+    #             self.green_carpet_patches.append((current_centroid[0], current_centroid[1], current_detection_size))
+            
+    #         self.last_green_mark_time = time.time()
+    #         self.last_green_carpet_points = [(int(pts[i, 0]), int(pts[i, 1])) for i in range(len(pts))]
+
+    #         self.green_carpet_active = False
+    #         return True
+            
+    #     except Exception as e:
+    #         print(f"[warning] Failed to apply permanent green mark: {e}")
+    #         self.green_carpet_active = False
+    #         return False
             
     def convert_to_map_coordinate_matrix(self, points_world):
         # Compute transformation from world to map:
