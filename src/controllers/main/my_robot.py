@@ -251,6 +251,7 @@ class MyRobot(Supervisor):
                             if ratio > 0.15:
                                 column_distance = self.estimate_column_distance(color) 
                                 if column_distance is not None:
+                                    print(f"---Estimated {color} column distance: {column_distance} cm")
                                     column_position = self.position_ahead(column_distance / 100) 
                                     column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
                                     self.update_column_estimation(color, column_map_position)
@@ -2187,7 +2188,7 @@ class MyRobot(Supervisor):
         return False
     
     def recover_from_stuck(self, turn_duration=(400, 600)):
-        self.set_robot_velocity(-8, -8)
+        self.set_robot_velocity(-6, -8)
         self.step(300)
         print('Recover from stuck')
 
