@@ -172,6 +172,47 @@ class MyRobot(Supervisor):
     #             pts.extend(extra_points)
 
     #         mo.column_points = pts
+    
+    def detect_green(self):
+        """Detect green carpet in the bottom half of the camera image."""
+
+        # Get sensor data
+        hsv_img = self.get_bottom_half_hsv()
+        
+        if hsv_img is None:
+            return None
+        
+        # Segment green carpet in image
+        green_mask = utils.segment_color(hsv_img, 'green')
+        
+        # If enough green pixels are detected, return True
+        green_pixels = cv2.countNonZero(green_mask)
+        print(f"Green pixels detected: {green_pixels}")
+        if green_pixels > 50:
+            return True
+        return False
+
+    def detect_green_is_close(self):
+        """Detect green carpet in the bottom half of the camera image."""
+
+        # Get sensor data
+        hsv_img = self.get_bottom_half_hsv()
+        
+        if hsv_img is None:
+            return None
+        
+        # Segment green carpet in image
+        green_mask = utils.segment_color(hsv_img, 'green')
+        
+        # If green is at the bottom of the image, consider it close
+        height, width = green_mask.shape
+        bottom_strip = green_mask[height-20:height, :]
+        green_pixels = cv2.countNonZero(bottom_strip)
+        ratio = green_pixels / (bottom_strip.shape[0] * bottom_strip.shape[1])
+        if ratio > 0.15:
+            print(f"Green carpet detected close, ratio: {ratio}")
+            return True
+        return False
 
 
     def camera_detection_loop(self):
@@ -193,11 +234,19 @@ class MyRobot(Supervisor):
                     if red_wall:
                         self.camera_detection_signal = 'red_wall'
                         continue
-                    #(diff_other_branch)
-                    # Green carpet has priority — skip column detection (diff_other_branch)
-                    if self.green_carpet_active:
-                        # time.sleep(0.1)
-                        continue
+
+                    green_detected = self.detect_green()
+                    if green_detected:
+                        self.camera_detection_signal = 'green_carpet'
+                        try:
+                            self.stop_motor()
+                            marked = self.mark_green_carpet_permanently(min_pixel_threshold=10)
+                            if marked:
+                                print("---- green carpet marked on map ----")
+
+                        except Exception as e:
+                            print(f"[Camera loop] Green marking attempt fail: {e}")
+                            continue
 
                     # Check for columns
                     color = self.detect_column()
@@ -218,10 +267,11 @@ class MyRobot(Supervisor):
                             self.turn_right_milisecond(600)
                         
                         elif update_count < 5:
+                            print(f"[Column] {color} update_count: {update_count}/5")
                             self.camera_detection_signal = ('column', color)
                             self.center_column_in_view(color)
                             ratio = self.get_column_center_ratio(color)
-                            if ratio > 0.04:
+                            if ratio > 0.15:
                                 column_distance = self.estimate_column_distance(color) 
                                 if column_distance is not None:
                                     column_position = self.position_ahead(column_distance / 100) 
@@ -230,8 +280,12 @@ class MyRobot(Supervisor):
                                     print(f"Updated {color} column position")
                                     if color == 'blue':
                                         self.blue_pos_update_count += 1
+                                        print(f"[Column] blue update_count incremented to {self.blue_pos_update_count}/5")
                                     elif color == 'yellow':
                                         self.yellow_pos_update_count += 1
+                                        print(f"[Column] yellow update_count incremented to {self.yellow_pos_update_count}/5")
+                        else:
+                            print(f"[Column] {color} update_count limit reached ({update_count}/5), skipping estimation")
                                 
                                 
             time.sleep(0.5)  # Check every 500ms
@@ -300,8 +354,14 @@ class MyRobot(Supervisor):
         center_frame = hsv_img[:, hsv_img.shape[1]//3: 2*hsv_img.shape[1]//3]
 
         column_mask = utils.segment_color(center_frame, color)
-        nonzero_pixels = np.count_nonzero(column_mask)
-        ratio = nonzero_pixels / (column_mask.shape[0] * column_mask.shape[1])
+        # nonzero_pixels = np.count_nonzero(column_mask)
+        # ratio = nonzero_pixels / (column_mask.shape[0] * column_mask.shape[1])
+        
+        # ratio = length of column in center frame / height of center frame
+        column_pixels_per_row = np.count_nonzero(column_mask, axis=1) # array of number of non-zero pixels per row [0,0,5,10,0,0,...]
+        # column height = number of rows with non-zero pixels
+        column_height = np.count_nonzero(column_pixels_per_row)
+        ratio = column_height / column_mask.shape[0]        
         return ratio
         
     def column_close(self, column_mask):
@@ -967,27 +1027,10 @@ class MyRobot(Supervisor):
         return False
     
     def slowly_360(self):
-        self.set_robot_velocity(5, -5)
-        self.step(4000)
-        self.stop_motor()
-        
-
-    def slowly_360_scan(self):
-        # rotate ~360 while allowing detection loop to run
-        # rotate while actively checking and marking columns
-        print("[Action] slowly_360_scan start")
+        print("check signal  360")
+        print(self.green_carpet_active, self.camera_detection_signal)
         self.set_robot_velocity(2, -2)
-
-        for _ in range(280):  # tune (70 * TIME_STEP) to get ~360 degrees
-            if self.step(self.time_step) == -1:
-                break
-
-            # This makes the scan real: detection + marking happens DURING rotation
-            if self.force_mark_column_if_visible():
-                # after marking, continue scanning a little more (or break)
-                # break
-                pass
-
+        self.step(4000)
         self.stop_motor()
         
 
@@ -1058,40 +1101,6 @@ class MyRobot(Supervisor):
 
         return None
 
-
-    def force_mark_column_if_visible(self):
-        """
-        If a column is visible enough RIGHT NOW, stop, center, and mark it
-        before doing anything else. Returns True if we marked something.
-        """
-        color = self.detect_column_strict(min_pixels=800)
-        if color is None:
-            return False
-
-        # already finalized?
-        if (color == 'blue' and self.start_point is not None) or (color == 'yellow' and self.end_point is not None):
-            return False
-
-        self.stop_motor()
-        self.center_column_in_view(color)
-
-        # Try distance-based marking; if depth fails, still mark close by current map cell.
-        dist = self.estimate_column_distance(color)  # your function stops the robot already
-        if dist is not None:
-            self.mark_on_map(dist, color=color)
-        else:
-            # If we are centered and seeing lots of pixels, we're close enough -> mark at robot position
-            self.mark_column(color)
-
-        # small settle so it "sticks" visually / avoids immediate re-detect spam
-        for _ in range(3):
-            if self.step(self.time_step) == -1:
-                break
-
-        print(f"[Action] force_mark_column_if_visible: marked {color} column")
-        return True
-
-
     # def mark_column(self, color):
     #     if color == 'blue':
     #         self.start_point = self.get_map_position() 
@@ -1131,7 +1140,7 @@ class MyRobot(Supervisor):
             else:
                 self.yellow_estimated_pos = 0.3 * np.array(self.yellow_estimated_pos) + 0.7 * np.array(position)
 
-    def explore(self, debug=True, keep_threads=True):
+    def explore(self, debug=True, keep_threads=False):
         '''
         1. Find blue
         2. Find yellow
@@ -1211,28 +1220,29 @@ class MyRobot(Supervisor):
                         # random_duration = random.randint(500, 700)
                         # self.turn_right_milisecond(random_duration)
                     
-            # --- Periodic green-carpet marking (low-frequency, with cooldown) ---
-            if count % 200 == 0:
-                try:
-                    # Use the larger min_pixel_threshold to ensure robot is close enough
-                    marked = self.mark_green_carpet_permanently(min_pixel_threshold=10)
-                    if marked:
-                        # If a mark was made, update map with lidar points to protect new area
-                        try:
-                            points = self.get_pointcloud_world_coordinates()
-                            map_points = self.convert_to_map_coordinate_matrix(points)
-                            # If GridMap API exists, call map update helpers
-                            if hasattr(self, 'bresenham_to_obstacle_score'):
-                                self.bresenham_to_obstacle_score(map_points)
-                            if hasattr(self.map_object, 'update_grid_map'):
-                                self.map_object.update_grid_map()
-                        except Exception:
-                            pass
-                except Exception as e:
-                    print(f"[Green Carpet] marking attempt failed: {e}")
+            # # --- Periodic green-carpet marking (low-frequency, with cooldown) ---
+            # if count % 200 == 0:
+            #     try:
+            #         # Use the larger min_pixel_threshold to ensure robot is close enough
+            #         marked = self.mark_green_carpet_permanently(min_pixel_threshold=10)
+            #         if marked:
+            #             # If a mark was made, update map with lidar points to protect new area
+            #             try:
+            #                 points = self.get_pointcloud_world_coordinates()
+            #                 map_points = self.convert_to_map_coordinate_matrix(points)
+            #                 # If GridMap API exists, call map update helpers
+            #                 if hasattr(self, 'bresenham_to_obstacle_score'):
+            #                     self.bresenham_to_obstacle_score(map_points)
+            #                 if hasattr(self.map_object, 'update_grid_map'):
+            #                     self.map_object.update_grid_map()
+            #             except Exception:
+            #                 pass
+            #     except Exception as e:
+            #         print(f"[Green Carpet] marking attempt failed: {e}")
 
             map_diff = utils.percentage_map_differences(previous_map, map_object.grid_map)
             frontier_regions, chosen_frontier, path_to_frontier = self.handle_frontier_exploration(count, map_diff)
+            
             # select only when nothing active
             if active_path is None and path_to_frontier:
                 active_path = path_to_frontier
@@ -1464,6 +1474,7 @@ class MyRobot(Supervisor):
         REVERSE_DISTANCE = 0.18     # meters
         MAP_UPDATE_WAIT_STEPS = 40  # allow LiDAR/map to update
         CARPET_CHECK_EVERY = 10     # timesteps (cheap + safe)
+        MAX_REPLAN_ATTEMPTS = 3     # maximum replan attempts before dropping path
 
         while target_index < len(current_path):
             target = current_path[target_index]
@@ -1518,20 +1529,13 @@ class MyRobot(Supervisor):
                         return False
 
                   # 🔵🟡 Column: PASSIVE only (consume signal; keep moving)
-                if isinstance(signal, tuple) and len(signal) >= 2 and signal[0] == 'column':
-                    _, color = signal
-                    # Passive update only (no turning, no stopping)
-                    try:
-                        self.update_column_estimation_from_view(color)
-                    except Exception:
-                        pass
-
+                
 
                 # --------------------------------------------------
                 # 2) ACTIVE: Green carpet marking during path following
                 #    (Polling approach: safe, uses your internal guards)
                 # --------------------------------------------------
-                if timestep_counter % CARPET_CHECK_EVERY == 0:
+                if signal == 'green_carpet' or timestep_counter % CARPET_CHECK_EVERY == 0:
                     try:
                         marked = self.mark_green_carpet_permanently(min_pixel_threshold=10)
                         if marked:
@@ -1550,14 +1554,22 @@ class MyRobot(Supervisor):
                             if new_path and len(new_path) > 5:
                                 current_path = list(new_path)
                                 target_index = 5
+                                replan_fail_count = 0  # reset on successful replan
                                 # IMPORTANT: restart inner loop using the new path immediately
                                 break
                             else:
-                                print("[Green Carpet] Replan failed right after marking; dropping this frontier")
-                                return False
+                                replan_fail_count += 1
+                                print(f"[Green Carpet] Replan failed ({replan_fail_count}/{MAX_REPLAN_ATTEMPTS}) right after marking")
+                                if replan_fail_count >= MAX_REPLAN_ATTEMPTS:
+                                    print(f"[Green Carpet] Max replan attempts ({MAX_REPLAN_ATTEMPTS}) exceeded; dropping frontier")
+                                    return False
 
                     except Exception as e:
                         print(f"[Green Carpet] marking attempt failed during frontier_following: {e}")
+
+                if isinstance(signal, tuple) and len(signal) >= 2 and signal[0] == 'column':
+                    _, color = signal
+                    self.update_column_estimation_from_view(color)
 
                 # --------------------------------------------------
                 # 3) FRONT OBSTACLE → REVERSE → WAIT → REPLAN
@@ -1634,15 +1646,15 @@ class MyRobot(Supervisor):
                     self.stop_motor()
 
                     # 1) recover
-                    try:
-                        self.recover_from_stuck()
-                    except Exception:
-                        pass
+                    self.lidar_update_map()
+                    self.recover_from_stuck()
+
 
                     # 2) wait for lidar/map update
                     for _ in range(MAP_UPDATE_WAIT_STEPS):
                         if self.step(self.time_step) == -1:
                             break
+                    self.lidar_update_map()
 
                     # 3) replan to SAME frontier_goal
                     try:
@@ -1656,13 +1668,21 @@ class MyRobot(Supervisor):
                             print("[Frontier] Replanned after stuck")
                             current_path = list(new_path)
                             target_index = 5
+                            replan_fail_count = 0  # reset on successful replan
                             break  # exit inner while, outer loop will pick new target from updated path
                         else:
-                            print("[Frontier] Replan failed after stuck, dropping frontier")
-                            return False
+                            replan_fail_count += 1
+                            print(f"[Frontier] Replan failed after stuck ({replan_fail_count}/{MAX_REPLAN_ATTEMPTS})")
+                            if replan_fail_count >= MAX_REPLAN_ATTEMPTS:
+                                print(f"[Frontier] Max replan attempts ({MAX_REPLAN_ATTEMPTS}) exceeded; dropping frontier")
+                                return False
+                            
                     except Exception as e:
-                        print(f"[Frontier] Replan error after stuck: {e}")
-                        return False
+                        replan_fail_count += 1
+                        print(f"[Frontier] Replan error after stuck ({replan_fail_count}/{MAX_REPLAN_ATTEMPTS}): {e}")
+                        if replan_fail_count >= MAX_REPLAN_ATTEMPTS:
+                            print(f"[Frontier] Max replan attempts ({MAX_REPLAN_ATTEMPTS}) exceeded due to error; dropping frontier")
+                            return False
                 # if is_stuck:
                 #     self.stop_motor()
                 #     self.turn_right_milisecond(random.randint(200, 400))
@@ -2590,13 +2610,19 @@ class MyRobot(Supervisor):
             bool: True if a permanent mark was successfully made, False otherwise.
         """
         self.green_carpet_active = True
-        # 1. Detect Green Carpet Points & Proximity Check
+        
+        # --- STEP 0: ALIGNMENT (CALIBRATION) FIRST ---
+        print("[Green Carpet] Aligning to green carpet before detection...")
+        self.align_to_green_carpet()
+        self.stop_motor()
+        
+        # --- STEP 1: Detect Green Carpet Points & Proximity Check (POST-ALIGNMENT) ---
         current_map_points = self.get_green_carpet_points() 
         current_detection_size = current_map_points.shape[0]
 
         if current_detection_size < min_pixel_threshold:
             self.green_carpet_active = False
-            # Carpet is either not detected or not close enough (size filter)
+            print(f"[Green Carpet] Detection too small after alignment ({current_detection_size} < {min_pixel_threshold})")
             return False
 
         # --- Data Preparation ---
@@ -2610,18 +2636,13 @@ class MyRobot(Supervisor):
 
         if x_indices.size == 0:
             self.green_carpet_active = False
+            print("[Green Carpet] No valid points in map bounds after alignment")
             return False
 
         current_detection_size = int(x_indices.size)
         current_centroid = np.array([np.mean(x_indices), np.mean(y_indices)])
 
-        
-        # Calculate Current Centroid (Mean map coordinates)
-        current_centroid = np.array([np.mean(x_indices), np.mean(y_indices)])
-
-        # --- 2. Multiple Patch Cooldown Check & Expansion Rule ---
-        
-        # Default status: Assume it's a new, unknown patch
+        # --- STEP 2: Multiple Patch Cooldown Check & Expansion Rule ---
         closest_patch_index = -1
         min_distance = float('inf')
         
@@ -2637,20 +2658,18 @@ class MyRobot(Supervisor):
             # Current detection is close to a known patch (Geographical Cooldown)
             old_size = self.green_carpet_patches[closest_patch_index][2]
             
-            # Apply Expansion Rule: Only proceed if this is a significant size increase (e.g., 20% larger)
+            # Apply Expansion Rule: Only proceed if this is a significant size increase
             if current_detection_size > old_size * 1.2: 
                 # EXPANSION: Update the record for the old patch with the new, larger size
                 self.green_carpet_patches[closest_patch_index] = (current_centroid[0], current_centroid[1], current_detection_size)
                 print(f"[Green Carpet] Expanding patch at [{old_x:.0f} {old_y:.0f}]. New size: {current_detection_size}")
-                # We still need to proceed to Newness check and Marking to physically update the map.
             else:
-                # Too close and not large enough: Skip marking to prevent shrinking/jitter noise.
-                # print(f"[Green Carpet] Skipping mark. Too close to known patch at [{old_x:.0f} {old_y:.0f}].")
+                # Too close and not large enough: Skip marking
                 self.green_carpet_active = False
+                print(f"[Green Carpet] Skipping mark. Too close to known patch and not large enough")
                 return False 
         
-        # --- 3. Newness Check (Runs only if it's a new patch or passed Expansion Rule) ---
-        
+        # --- STEP 3: Newness Check ---
         try:
             green_protect_mask = (self.grid_map == GREEN_CARPET)
         except NameError:
@@ -2661,57 +2680,30 @@ class MyRobot(Supervisor):
         newness_ratio = num_new_cells / current_detection_size
         
         if newness_ratio < new_area_threshold:
-            # Area is already mostly marked (This is the final guardrail against unnecessary marking)
             self.green_carpet_active = False
+            print(f"[Green Carpet] Area already mostly marked (newness_ratio: {newness_ratio:.2f})")
             return False
 
-        # --- 4. Align and Final Permanent Mark ---
+        # --- STEP 4: Final Permanent Mark (AFTER ALIGNMENT) ---
+        print(f"[Green Carpet] Marking carpet area ({current_detection_size} pixels)...")
         
-        print(f"[Green Carpet] NEW area detected ({current_detection_size} pixels) and close enough. Aligning...")
-        
-        # Align the robot to center the patch
-        self.align_to_green_carpet() 
-        self.stop_motor()
-
-        # Re-run detection after alignment for the final map mark
-        final_map_points = self.get_green_carpet_points()
-        
-        if final_map_points.shape[0] > 0:
-            final_pts = final_map_points.astype(np.int32)
-            final_y = final_pts[:, 1]
-            final_x = final_pts[:, 0]
-
-            H, W = self.grid_map.shape
-            valid2 = (final_x >= 0) & (final_x < W) & (final_y >= 0) & (final_y < H)
-            final_x = final_x[valid2]
-            final_y = final_y[valid2]
-            final_size = int(final_x.size) 
-            if final_x.size == 0:
-                self.green_carpet_active = False
-                return False
-
+        # Grid map update with validated points
+        try:
+            self.grid_map[y_indices, x_indices] = int(GREEN_CARPET)
             
-            # --- FINAL PERMANENT MARKING ---
-            try:
-                self.grid_map[final_y, final_x] = int(GREEN_CARPET)
-                
-                # If this was a genuinely NEW patch, add it to the list.
-                # If it was an expansion, the list item was already updated in Step 2.
-                if min_distance >= self.green_carpet_proximity_threshold:
-                    self.green_carpet_patches.append((current_centroid[0], current_centroid[1], final_size))
-                
-                self.last_green_mark_time = time.time()
-                self.last_green_carpet_points = [tuple(p) for p in final_pts]
+            # If this was a genuinely NEW patch, add it to the list.
+            if min_distance >= self.green_carpet_proximity_threshold:
+                self.green_carpet_patches.append((current_centroid[0], current_centroid[1], current_detection_size))
+            
+            self.last_green_mark_time = time.time()
+            self.last_green_carpet_points = [(int(pts[i, 0]), int(pts[i, 1])) for i in range(len(pts))]
 
-                print(f"[Map Update] Successfully marked new persistent green carpet ({final_size} pixels).")
-                self.green_carpet_active = False
-                return True
-            except Exception as e:
-                print(f"[warning] Failed to apply permanent green mark: {e}")
-                self.green_carpet_active = False
-                return False
-        else:
-            print("[Green Carpet] Lost detection after alignment.")
+            print(f"[Map Update] Successfully marked new persistent green carpet ({current_detection_size} pixels).")
+            self.green_carpet_active = False
+            return True
+            
+        except Exception as e:
+            print(f"[warning] Failed to apply permanent green mark: {e}")
             self.green_carpet_active = False
             return False
             
