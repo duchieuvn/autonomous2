@@ -187,33 +187,9 @@ class MyRobot(Supervisor):
         
         # If enough green pixels are detected, return True
         green_pixels = cv2.countNonZero(green_mask)
-        print(f"Green pixels detected: {green_pixels}")
         if green_pixels > 50:
             return True
         return False
-
-    def detect_green_is_close(self):
-        """Detect green carpet in the bottom half of the camera image."""
-
-        # Get sensor data
-        hsv_img = self.get_bottom_half_hsv()
-        
-        if hsv_img is None:
-            return None
-        
-        # Segment green carpet in image
-        green_mask = utils.segment_color(hsv_img, 'green')
-        
-        # If green is at the bottom of the image, consider it close
-        height, width = green_mask.shape
-        bottom_strip = green_mask[height-20:height, :]
-        green_pixels = cv2.countNonZero(bottom_strip)
-        ratio = green_pixels / (bottom_strip.shape[0] * bottom_strip.shape[1])
-        if ratio > 0.15:
-            print(f"Green carpet detected close, ratio: {ratio}")
-            return True
-        return False
-
 
     def camera_detection_loop(self):
         """Continuous detection loop with shared variable communication."""
@@ -238,15 +214,16 @@ class MyRobot(Supervisor):
                     green_detected = self.detect_green()
                     if green_detected:
                         self.camera_detection_signal = 'green_carpet'
-                        try:
-                            self.stop_motor()
-                            marked = self.mark_green_carpet_permanently(min_pixel_threshold=10)
-                            if marked:
-                                print("---- green carpet marked on map ----")
+                        continue
+                        # try:
+                        #     self.stop_motor()
+                        #     marked = self.mark_green_carpet_permanently(min_pixel_threshold=10)
+                        #     if marked:
+                        #         print("---- green carpet marked on map ----")
 
-                        except Exception as e:
-                            print(f"[Camera loop] Green marking attempt fail: {e}")
-                            continue
+                        # except Exception as e:
+                        #     print(f"[Camera loop] Green marking attempt fail: {e}")
+                        #     continue
 
                     # Check for columns
                     color = self.detect_column()
@@ -329,7 +306,7 @@ class MyRobot(Supervisor):
         last_position = self.get_position()
         while self.stuck_thread_running:
             with self.stuck_lock:  
-                time.sleep(4)
+                time.sleep(2.5)
                 # Check if motors are running (any motor has non-zero velocity)
                 motor_velocities = [motor.getVelocity() for motor in self.motors.values()]
                 is_moving = any(abs(v) > 0.01 for v in motor_velocities)  # Small threshold to account for floating point
@@ -1028,9 +1005,8 @@ class MyRobot(Supervisor):
     
     def slowly_360(self):
         print("check signal  360")
-        print(self.green_carpet_active, self.camera_detection_signal)
         self.set_robot_velocity(2, -2)
-        self.step(4000)
+        self.step(8000)
         self.stop_motor()
         
 
@@ -1140,7 +1116,7 @@ class MyRobot(Supervisor):
             else:
                 self.yellow_estimated_pos = 0.3 * np.array(self.yellow_estimated_pos) + 0.7 * np.array(position)
 
-    def explore(self, debug=True, keep_threads=False):
+    def explore(self, debug=True, keep_threads=True):
         '''
         1. Find blue
         2. Find yellow
@@ -1154,6 +1130,7 @@ class MyRobot(Supervisor):
         # Start continuous detection and lidar threads before any setup
         self.start_camera_thread()
         self.start_lidar_thread()
+        # self.start_stuck_thread()
         active_frontier = None
         active_path = None
 
@@ -1276,22 +1253,17 @@ class MyRobot(Supervisor):
 
         # Clean up detection/lidar threads and visualization
         # If `keep_threads` is True we will reuse the running threads/visualizer
-        if not keep_threads:
-            self.stop_camera_thread()
-            self.stop_lidar_thread()
-            if debug:
-                map_object.stop_visualization()
-        else:
-            # Reuse threads: clear transient signals and transient flags so
-            # final path following isn't immediately interrupted by stale state.
-            try:
-                with self.detection_lock:
-                    self.camera_detection_signal = None
-                    self.green_carpet_active = False
-                    self.last_green_carpet_points = []
-            except Exception:
-                pass
-            # allow sensors/threads a short moment to stabilize
+        self.stop_camera_thread()
+        self.stop_lidar_thread()
+        # self.stop_stuck_thread()
+        map_object.stop_visualization()
+
+        # Reuse threads: clear transient signals and transient flags so
+        # final path following isn't immediately interrupted by stale state.
+        with self.detection_lock:
+            self.camera_detection_signal = None
+            self.green_carpet_active = False
+            self.last_green_carpet_points = []
             time.sleep(0.5)
 
         self.stop_motor()
@@ -1467,14 +1439,14 @@ class MyRobot(Supervisor):
         current_path = list(path)
         timestep_counter = 0
         stuck_counter = 0
-        replan_fail_count = 0
+        stuck_attempt_count = 0     # Track total stuck events (not replan failures)
 
         target_index = 5
         OBSTACLE_THRESHOLD = 0.08   # meters
         REVERSE_DISTANCE = 0.18     # meters
         MAP_UPDATE_WAIT_STEPS = 40  # allow LiDAR/map to update
         CARPET_CHECK_EVERY = 10     # timesteps (cheap + safe)
-        MAX_REPLAN_ATTEMPTS = 3     # maximum replan attempts before dropping path
+        MAX_STUCK_ATTEMPTS = 3      # maximum stuck events before dropping frontier
 
         while target_index < len(current_path):
             target = current_path[target_index]
@@ -1536,36 +1508,29 @@ class MyRobot(Supervisor):
                 #    (Polling approach: safe, uses your internal guards)
                 # --------------------------------------------------
                 if signal == 'green_carpet' or timestep_counter % CARPET_CHECK_EVERY == 0:
-                    try:
-                        marked = self.mark_green_carpet_permanently(min_pixel_threshold=10)
-                        if marked:
-                            print("[Green Carpet] Marked during frontier_following -> STOP + REPLAN now")
-                            self.stop_motor()
+                    marked = self.mark_green_carpet_permanently(min_pixel_threshold=10)
+                    if marked:
+                        self.stop_motor()
 
-                            # Let lidar thread + map settle a moment
-                            for _ in range(MAP_UPDATE_WAIT_STEPS):
-                                if self.step(self.time_step) == -1:
-                                    return False
+                        return False
 
-                            # Replan to same fixed goal using updated map
-                            current_start = self.get_map_position()
-                            new_path = self.map_object.find_path_for_frontier(current_start, frontier_goal)
+                        # # Replan to same fixed goal using updated map
+                        # current_start = self.get_map_position()
+                        # new_path = self.map_object.find_path_for_frontier(current_start, frontier_goal)
 
-                            if new_path and len(new_path) > 5:
-                                current_path = list(new_path)
-                                target_index = 5
-                                replan_fail_count = 0  # reset on successful replan
-                                # IMPORTANT: restart inner loop using the new path immediately
-                                break
-                            else:
-                                replan_fail_count += 1
-                                print(f"[Green Carpet] Replan failed ({replan_fail_count}/{MAX_REPLAN_ATTEMPTS}) right after marking")
-                                if replan_fail_count >= MAX_REPLAN_ATTEMPTS:
-                                    print(f"[Green Carpet] Max replan attempts ({MAX_REPLAN_ATTEMPTS}) exceeded; dropping frontier")
-                                    return False
+                        # if new_path and len(new_path) > 5:
+                        #     current_path = list(new_path)
+                        #     target_index = 5
+                        #     replan_fail_count = 0  # reset on successful replan
+                        #     # IMPORTANT: restart inner loop using the new path immediately
+                        #     break
+                        # else:
+                        #     replan_fail_count += 1
+                        #     print(f"[Green Carpet] Replan failed ({replan_fail_count}/{MAX_REPLAN_ATTEMPTS}) right after marking")
+                        #     if replan_fail_count >= MAX_REPLAN_ATTEMPTS:
+                        #         print(f"[Green Carpet] Max replan attempts ({MAX_REPLAN_ATTEMPTS}) exceeded; dropping frontier")
+                        #         return False
 
-                    except Exception as e:
-                        print(f"[Green Carpet] marking attempt failed during frontier_following: {e}")
 
                 if isinstance(signal, tuple) and len(signal) >= 2 and signal[0] == 'column':
                     _, color = signal
@@ -1589,11 +1554,6 @@ class MyRobot(Supervisor):
                         if self.step(self.time_step) == -1:
                             break
                     self.stop_motor()
-
-                    # wait for map update (lidar thread + stabilization)
-                    for _ in range(MAP_UPDATE_WAIT_STEPS):
-                        if self.step(self.time_step) == -1:
-                            break
 
                     self.lidar_update_map()
                     return False
@@ -1642,21 +1602,25 @@ class MyRobot(Supervisor):
                 # --------------------------------------------------
                 reached, is_stuck = self.follow_local_target(target)
                 if is_stuck:
-                    print("[Frontier] Local following stuck -> recover + replan")
+                    stuck_attempt_count += 1
+                    print(f"[Frontier] Local following stuck ({stuck_attempt_count}/{MAX_STUCK_ATTEMPTS}) -> recover + replan")
+                    
+                    # Check if we've exceeded max stuck attempts
+                    if stuck_attempt_count >= MAX_STUCK_ATTEMPTS:
+                        print(f"[Frontier] Stuck {MAX_STUCK_ATTEMPTS} times, dropping frontier")
+                        if not hasattr(self.map_object, "visited_frontiers"):
+                            self.map_object.visited_frontiers = []
+                        self.map_object.visited_frontiers.append(tuple(frontier_goal))
+                        self.stop_motor()
+                        return False
+                    
                     self.stop_motor()
 
                     # 1) recover
                     self.lidar_update_map()
                     self.recover_from_stuck()
 
-
-                    # 2) wait for lidar/map update
-                    for _ in range(MAP_UPDATE_WAIT_STEPS):
-                        if self.step(self.time_step) == -1:
-                            break
-                    self.lidar_update_map()
-
-                    # 3) replan to SAME frontier_goal
+                    # 2) replan to SAME frontier_goal
                     try:
                         current_start = self.get_map_position()
                         if use_global_planner:
@@ -1668,21 +1632,20 @@ class MyRobot(Supervisor):
                             print("[Frontier] Replanned after stuck")
                             current_path = list(new_path)
                             target_index = 5
-                            replan_fail_count = 0  # reset on successful replan
                             break  # exit inner while, outer loop will pick new target from updated path
                         else:
-                            replan_fail_count += 1
-                            print(f"[Frontier] Replan failed after stuck ({replan_fail_count}/{MAX_REPLAN_ATTEMPTS})")
-                            if replan_fail_count >= MAX_REPLAN_ATTEMPTS:
-                                print(f"[Frontier] Max replan attempts ({MAX_REPLAN_ATTEMPTS}) exceeded; dropping frontier")
-                                return False
+                            print("[Frontier] Replan failed, dropping frontier")
+                            if not hasattr(self.map_object, "visited_frontiers"):
+                                self.map_object.visited_frontiers = []
+                            self.map_object.visited_frontiers.append(tuple(frontier_goal))
+                            return False
                             
                     except Exception as e:
-                        replan_fail_count += 1
-                        print(f"[Frontier] Replan error after stuck ({replan_fail_count}/{MAX_REPLAN_ATTEMPTS}): {e}")
-                        if replan_fail_count >= MAX_REPLAN_ATTEMPTS:
-                            print(f"[Frontier] Max replan attempts ({MAX_REPLAN_ATTEMPTS}) exceeded due to error; dropping frontier")
-                            return False
+                        print(f"[Frontier] Replan error: {e}, dropping frontier")
+                        if not hasattr(self.map_object, "visited_frontiers"):
+                            self.map_object.visited_frontiers = []
+                        self.map_object.visited_frontiers.append(tuple(frontier_goal))
+                        return False
                 # if is_stuck:
                 #     self.stop_motor()
                 #     self.turn_right_milisecond(random.randint(200, 400))
@@ -2369,12 +2332,8 @@ class MyRobot(Supervisor):
             return np.array([])
 
         # --- 1. Color Segmentation and Pixel Selection ---
-        # **ACTION REQUIRED: TUNE THESE VALUES**
-        lower_green = np.array([40, 15, 5])
-        upper_green = np.array([95, 255, 255])
-
-        
-        green_mask = cv2.inRange(hsv_img, lower_green, upper_green)
+        # Uses centralized GREEN_HSV_LOWER/UPPER from CONSTANTS.py via utils.segment_color()
+        green_mask = utils.segment_color(hsv_img, 'green')
         
         h_start = int(self.cam_height * 0.5) 
         green_mask[:h_start, :] = 0
@@ -2466,77 +2425,49 @@ class MyRobot(Supervisor):
 
     def align_to_green_carpet(self):
         """
-        Adaptive alignment (distance-sensors only):
-        - if front blocked -> reverse while aligning (if back safe)
-        - if both front & back tight -> rotate in place
-        - else -> forward while aligning
+        New alignment strategy:
+        - Move backward until green color disappears from the bottom of the image.
+        - This ensures the robot is at the edge of the green carpet, not on top of it.
         """
-        print("Aligning to green carpet (adaptive, DS-only).")
-
-        Kp = 0.015
-        error_threshold = 10
-        max_turn = 6.0
-
-        # thresholds in the SAME units as your range sensors (usually meters in Webots)
-        TH_BLOCK = 0.30     # consider "blocked" if closer than this
-        TH_BACK_SAFE = 0.22 # allow reversing only if back clearance > this
-
-        FWD = 3.0
-        REV = -3.0
-
+        MAX_STEPS = 300
         steps = 0
-        MAX_STEPS = 120
+        BOTTOM_STRIP_HEIGHT = 30  # pixels from bottom to monitor
+        MIN_GREEN_PIXELS = 50     # threshold to consider green "present"
+
+        # Start moving backward
+        back_speed = -3.0  # negative for backward
+        self.set_robot_velocity(back_speed, back_speed)
 
         while self.step(self.time_step) != -1:
             steps += 1
             if steps > MAX_STEPS:
                 self.stop_motor()
-                print("Green alignment timeout.")
+                print("Green alignment timeout (max steps reached).")
                 break
 
             hsv_img = self.get_hsv_image()
             if hsv_img is None:
                 self.stop_motor()
+                print("Camera error during alignment.")
                 break
 
             height, width, _ = hsv_img.shape
-            h_start = int(height * 0.5)
-            hsv_cropped = hsv_img[h_start:, :]
 
-            lower_green = np.array([40, 40, 40])
-            upper_green = np.array([80, 255, 255])
-            green_mask = cv2.inRange(hsv_cropped, lower_green, upper_green)
+            # Extract bottom strip of image
+            bottom_strip = hsv_img[height - BOTTOM_STRIP_HEIGHT:, :]
 
-            M = cv2.moments(green_mask)
-            if M["m00"] <= 0:
+            # Detect green in the bottom strip using centralized CONSTANTS
+            green_mask = utils.segment_color(bottom_strip, 'green')
+
+            green_pixels = cv2.countNonZero(green_mask)
+
+            # Check if green has disappeared from the bottom
+            if green_pixels < MIN_GREEN_PIXELS:
                 self.stop_motor()
-                print("Green carpet lost during alignment.")
                 break
 
-            cX = int(M["m10"] / M["m00"])
-            error = cX - (width // 2)
-
-            if abs(error) < error_threshold:
-                self.stop_motor()
-                print("Green carpet alignment complete.")
-                break
-
-            # --- DS-only decision ---
-            front_d = self.get_front_clearance_ds()
-            back_d = self.get_back_clearance_ds()
-
-            if (front_d < TH_BLOCK) and (back_d < TH_BLOCK):
-                base = 0.0  # corridor/corner -> rotate only
-            elif front_d < TH_BLOCK:
-                base = REV if back_d > TH_BACK_SAFE else 0.0  # reverse if safe else rotate
-            else:
-                base = FWD  # front clear -> forward align
-
-            turn = float(np.clip(Kp * error, -max_turn, max_turn))
-
-            left = base + turn
-            right = base - turn
-            self.set_robot_velocity(left, right)
+            # Continue backward
+            self.set_robot_velocity(back_speed, back_speed)
 
 
     # def align_to_green_carpet(self):
@@ -2602,6 +2533,12 @@ class MyRobot(Supervisor):
         Checks if the detected green carpet is close enough and is either a new area
         or a significant expansion of a previously marked area, then aligns and marks it permanently.
 
+        Optimized flow:
+        1. Check if it has been marked before (quick pre-check) - avoids expensive alignment
+        2. If not yet marked, align to green carpet
+        3. Gather camera and depth information again (post-alignment)
+        4. Mark on the map
+
         Args:
             min_pixel_threshold (int): Minimum number of pixels required to consider the carpet 'close'.
             new_area_threshold (float): Minimum proportion of points that must be unmarked for the area to be considered 'new'.
@@ -2611,94 +2548,123 @@ class MyRobot(Supervisor):
         """
         self.green_carpet_active = True
         
-        # --- STEP 0: ALIGNMENT (CALIBRATION) FIRST ---
-        print("[Green Carpet] Aligning to green carpet before detection...")
-        self.align_to_green_carpet()
-        self.stop_motor()
-        
-        # --- STEP 1: Detect Green Carpet Points & Proximity Check (POST-ALIGNMENT) ---
-        current_map_points = self.get_green_carpet_points() 
-        current_detection_size = current_map_points.shape[0]
+        # --- STEP 1: PRE-ALIGNMENT CHECK - Has this been marked before? ---
+        # Get initial detection (before expensive alignment operation)
+        initial_map_points = self.get_green_carpet_points()
+        initial_detection_size = initial_map_points.shape[0]
 
-        if current_detection_size < min_pixel_threshold:
+        if initial_detection_size < min_pixel_threshold:
             self.green_carpet_active = False
-            print(f"[Green Carpet] Detection too small after alignment ({current_detection_size} < {min_pixel_threshold})")
             return False
 
-        # --- Data Preparation ---
-        pts = current_map_points.astype(np.int32)
-        y_indices = pts[:, 1]
-        x_indices = pts[:, 0]
+        # Prepare initial data for pre-check
+        initial_pts = initial_map_points.astype(np.int32)
+        initial_y_indices = initial_pts[:, 1]
+        initial_x_indices = initial_pts[:, 0]
         H, W = self.grid_map.shape
-        valid = (x_indices >= 0) & (x_indices < W) & (y_indices >= 0) & (y_indices < H)
-        x_indices = x_indices[valid]
-        y_indices = y_indices[valid]
+        valid = (initial_x_indices >= 0) & (initial_x_indices < W) & (initial_y_indices >= 0) & (initial_y_indices < H)
+        initial_x_indices = initial_x_indices[valid]
+        initial_y_indices = initial_y_indices[valid]
 
-        if x_indices.size == 0:
+        if initial_x_indices.size == 0:
             self.green_carpet_active = False
-            print("[Green Carpet] No valid points in map bounds after alignment")
             return False
 
-        current_detection_size = int(x_indices.size)
-        current_centroid = np.array([np.mean(x_indices), np.mean(y_indices)])
+        initial_centroid = np.array([np.mean(initial_x_indices), np.mean(initial_y_indices)])
 
-        # --- STEP 2: Multiple Patch Cooldown Check & Expansion Rule ---
+        # Check 1a: Geographic cooldown (patch-based proximity check)
         closest_patch_index = -1
         min_distance = float('inf')
         
         for i, (old_x, old_y, old_size) in enumerate(self.green_carpet_patches):
             old_centroid = np.array([old_x, old_y])
-            distance_to_old_mark = np.linalg.norm(current_centroid - old_centroid)
+            distance_to_old_mark = np.linalg.norm(initial_centroid - old_centroid)
             
             if distance_to_old_mark < min_distance:
                 min_distance = distance_to_old_mark
                 closest_patch_index = i
         
         if closest_patch_index != -1 and min_distance < self.green_carpet_proximity_threshold:
-            # Current detection is close to a known patch (Geographical Cooldown)
+            # Current detection is close to a known patch
             old_size = self.green_carpet_patches[closest_patch_index][2]
             
-            # Apply Expansion Rule: Only proceed if this is a significant size increase
-            if current_detection_size > old_size * 1.2: 
-                # EXPANSION: Update the record for the old patch with the new, larger size
-                self.green_carpet_patches[closest_patch_index] = (current_centroid[0], current_centroid[1], current_detection_size)
-                print(f"[Green Carpet] Expanding patch at [{old_x:.0f} {old_y:.0f}]. New size: {current_detection_size}")
-            else:
-                # Too close and not large enough: Skip marking
+            # Only proceed if this is a significant size increase (expansion)
+            if initial_detection_size <= old_size * 1.2:
+                # Too close and not large enough: Skip marking (already marked)
                 self.green_carpet_active = False
-                print(f"[Green Carpet] Skipping mark. Too close to known patch and not large enough")
-                return False 
+                return False
         
-        # --- STEP 3: Newness Check ---
+        # Check 1b: Cell-level newness check
         try:
             green_protect_mask = (self.grid_map == GREEN_CARPET)
         except NameError:
             green_protect_mask = np.zeros_like(self.grid_map, dtype=bool)
 
-        newly_detected_cells = ~green_protect_mask[y_indices, x_indices]
+        newly_detected_cells = ~green_protect_mask[initial_y_indices, initial_x_indices]
         num_new_cells = np.sum(newly_detected_cells)
-        newness_ratio = num_new_cells / current_detection_size
+        newness_ratio = num_new_cells / initial_detection_size
         
         if newness_ratio < new_area_threshold:
+            # Already marked (less than 50% is new)
             self.green_carpet_active = False
-            print(f"[Green Carpet] Area already mostly marked (newness_ratio: {newness_ratio:.2f})")
+            return False
+        
+        # --- STEP 2: ALIGNMENT (only if area is NEW) ---
+        self.align_to_green_carpet()
+        self.stop_motor()
+        time.sleep(0.2)
+
+        # --- STEP 3: POST-ALIGNMENT DETECTION - Gather fresh camera and depth information ---
+        current_map_points = self.get_green_carpet_points() 
+        current_detection_size = current_map_points.shape[0]
+
+        if current_detection_size < min_pixel_threshold:
+            self.green_carpet_active = False
             return False
 
-        # --- STEP 4: Final Permanent Mark (AFTER ALIGNMENT) ---
-        print(f"[Green Carpet] Marking carpet area ({current_detection_size} pixels)...")
-        
-        # Grid map update with validated points
+        # Data preparation for final marking (post-alignment)
+        pts = current_map_points.astype(np.int32)
+        y_indices = pts[:, 1]
+        x_indices = pts[:, 0]
+        valid = (x_indices >= 0) & (x_indices < W) & (y_indices >= 0) & (y_indices < H)
+        x_indices = x_indices[valid]
+        y_indices = y_indices[valid]
+
+        if x_indices.size == 0:
+            self.green_carpet_active = False
+            return False
+
+        current_detection_size = int(x_indices.size)
+        current_centroid = np.array([np.mean(x_indices), np.mean(y_indices)])
+
+        # --- STEP 4: MARK ON MAP (using post-alignment data) ---
         try:
-            self.grid_map[y_indices, x_indices] = int(GREEN_CARPET)
+            # Create a temporary mask to dilate the detected area
+            temp_mask = np.zeros_like(self.grid_map, dtype=np.uint8)
+            temp_mask[y_indices, x_indices] = 1
             
-            # If this was a genuinely NEW patch, add it to the list.
-            if min_distance >= self.green_carpet_proximity_threshold:
+            # Dilate the mask to expand the marked area (buffer zone for easier avoidance)
+            kernel_size = 5  # Adjust this to control expansion size (larger = bigger buffer)
+            kernel = np.ones((kernel_size, kernel_size), np.uint8)
+            dilated_mask = cv2.dilate(temp_mask, kernel, iterations=1)
+            
+            # Extract expanded indices from dilated mask
+            expanded_y_indices, expanded_x_indices = np.where(dilated_mask == 1)
+            
+            # Mark the expanded area on the grid map
+            self.grid_map[expanded_y_indices, expanded_x_indices] = int(GREEN_CARPET)
+            
+            # Update or add patch record
+            if closest_patch_index != -1 and min_distance < self.green_carpet_proximity_threshold:
+                # Update existing patch with new size (expansion case)
+                self.green_carpet_patches[closest_patch_index] = (current_centroid[0], current_centroid[1], current_detection_size)
+            else:
+                # Add as genuinely NEW patch
                 self.green_carpet_patches.append((current_centroid[0], current_centroid[1], current_detection_size))
             
             self.last_green_mark_time = time.time()
             self.last_green_carpet_points = [(int(pts[i, 0]), int(pts[i, 1])) for i in range(len(pts))]
 
-            print(f"[Map Update] Successfully marked new persistent green carpet ({current_detection_size} pixels).")
             self.green_carpet_active = False
             return True
             

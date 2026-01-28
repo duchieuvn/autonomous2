@@ -6,7 +6,7 @@ MAP_SIZE = 300 # 10m x 10m grid map
 # 300 pixels = 10m, so each pixel is 0.0333m = 3.33cm
 RESOLUTION = 10.0 / MAP_SIZE
 
-INITIAL_LOG_ODD = 0.8
+INITIAL_LOG_ODD = 1.0
 OBSTACLE = 1
 FREESPACE = 0
 UNKNOWN = 255
@@ -96,6 +96,12 @@ RED_WALL_HSV_LOWER1 = [0, 120, 70]    # [USED] Red color lower bound 1 (HSV)
 RED_WALL_HSV_UPPER1 = [10, 255, 255]  # [USED] Red color upper bound 1 (HSV)
 RED_WALL_HSV_LOWER2 = [170, 120, 70]  # [USED] Red color lower bound 2 (HSV)
 RED_WALL_HSV_UPPER2 = [180, 255, 255] # [USED] Red color upper bound 2 (HSV)
+BLUE_HSV_LOWER = [100, 150, 50]       # [USED] Blue color lower bound (HSV)
+BLUE_HSV_UPPER = [140, 255, 255]      # [USED] Blue color upper bound (HSV)
+YELLOW_HSV_LOWER = [20, 100, 100]     # [USED] Yellow color lower bound (HSV)
+YELLOW_HSV_UPPER = [35, 255, 255]     # [USED] Yellow color upper bound (HSV)
+GREEN_HSV_LOWER = [36, 100, 100]      # [USED] Green color lower bound (HSV)
+GREEN_HSV_UPPER = [86, 255, 255]      # [USED] Green color upper bound (HSV)
 
 # --- TURNING & TURNING COOLDOWN ---
 TURN_ROTATION_COOLDOWN_STEPS = 10           # [UNUSED] Steps cooldown after turning stops (used as hardcoded 10 in is_turning method)

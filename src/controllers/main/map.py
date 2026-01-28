@@ -578,6 +578,19 @@ class GridMap():
                     # screen_x, screen_y = self._map_to_screen(x, y)
                     # pygame.draw.circle(self.pygame_screen, (255, 255, 255), (screen_x, screen_y), 8, 2)
             
+            # Draw marked start/end points on the map with distinct markers
+            if start_point is not None:
+                self._draw_point(start_point[0], start_point[1], color=(0, 0, 255), radius=8)
+                # Draw an outline circle for clarity
+                screen_x, screen_y = self._map_to_screen(start_point[0], start_point[1])
+                pygame.draw.circle(self.pygame_screen, (255, 255, 255), (screen_x, screen_y), 10, 2)
+            
+            if end_point is not None:
+                self._draw_point(end_point[0], end_point[1], color=(255, 200, 0), radius=8)
+                # Draw an outline circle for clarity
+                screen_x, screen_y = self._map_to_screen(end_point[0], end_point[1])
+                pygame.draw.circle(self.pygame_screen, (255, 255, 255), (screen_x, screen_y), 10, 2)
+            
             # Draw robot last (on top) to ensure visibility
             if robot_pos:
                 self._draw_point(robot_pos[0], robot_pos[1], color=(0, 0, 255), radius=6)
