@@ -1,21 +1,18 @@
 import pygame
 from my_robot import MyRobot
-
 import numpy as np
 
 def main():
     robot = MyRobot()
-    # Stagge 1
     main_path = robot.explore()
-    print('Found path')
+    if not main_path:
+        print("[warning] main_path is None/empty")
+        return
 
-    # Stage 2
-    cur_position = robot.get_map_position()
-    first_path = robot.find_path(cur_position, robot.start_point)
+    print("Found path")
     robot.step(100)
-    robot.path_following_pipeline(first_path)
-    robot.step(100)
-    robot.path_following_pipeline(main_path)
-    
-main()  
+    robot.follow_final_path(main_path, debug_vis=True, replan_interval=60)
 
+
+
+main()

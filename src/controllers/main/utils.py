@@ -1,5 +1,6 @@
 import numpy as np
-import cv2 
+import cv2
+from CONSTANTS import *
 
 def get_angle_diff(a, b):
     diff = a - b
@@ -22,6 +23,26 @@ def remove_noisy_pixels(grid_map, obstacle_value=1, connectivity=8):
         if stats[label, cv2.CC_STAT_AREA] > 1:
             cleaned[labels == label] = 255
     cleaned_map = np.where(cleaned == 255, obstacle_value, 0)
+    return cleaned_map
+
+def clean_small_obstacle_components(grid_map, obstacle_value=1, min_size=5, connectivity=8):
+    """
+    Remove obstacle components smaller than min_size pixels while preserving other cell values.
+    """
+    binary_uint8 = np.where(grid_map == obstacle_value, 255, 0).astype(np.uint8)
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+        binary_uint8, connectivity=connectivity
+    )
+
+    keep_mask = np.zeros_like(binary_uint8)
+    for label in range(1, num_labels):
+        if stats[label, cv2.CC_STAT_AREA] >= min_size:
+            keep_mask[labels == label] = 255
+
+    cleaned_map = grid_map.copy()
+    # Set small components back to free space (0) while keeping other cells unchanged
+    drop_mask = (keep_mask == 0) & (grid_map == obstacle_value)
+    cleaned_map[drop_mask] = 0
     return cleaned_map
 
 def inflate_obstacles(grid_map, inflation_pixels=10):
@@ -106,31 +127,31 @@ def segment_color(hsv_img, color):
     """Segments an image based on the specified color in HSV space."""
     if color == 'red':
         # Red can wrap around in HSV, so we need two ranges
-        lower_red1 = np.array([0, 120, 70])
-        upper_red1 = np.array([10, 255, 255])
+        lower_red1 = np.array(RED_WALL_HSV_LOWER1)
+        upper_red1 = np.array(RED_WALL_HSV_UPPER1)
         mask1 = cv2.inRange(hsv_img, lower_red1, upper_red1)
 
-        lower_red2 = np.array([170, 120, 70])
-        upper_red2 = np.array([180, 255, 255])
+        lower_red2 = np.array(RED_WALL_HSV_LOWER2)
+        upper_red2 = np.array(RED_WALL_HSV_UPPER2)
         mask2 = cv2.inRange(hsv_img, lower_red2, upper_red2)
 
         return cv2.bitwise_or(mask1, mask2)
 
     elif color == 'blue':
-        lower_blue = np.array([100, 150, 50])
-        upper_blue = np.array([140, 255, 255])
+        lower_blue = np.array(BLUE_HSV_LOWER)
+        upper_blue = np.array(BLUE_HSV_UPPER)
         blue_mask = cv2.inRange(hsv_img, lower_blue, upper_blue)
         return blue_mask
 
     elif color == 'yellow':
-        lower_yellow = np.array([20, 100, 100])
-        upper_yellow = np.array([35, 255, 255])
+        lower_yellow = np.array(YELLOW_HSV_LOWER)
+        upper_yellow = np.array(YELLOW_HSV_UPPER)
         yellow_mask = cv2.inRange(hsv_img, lower_yellow, upper_yellow)
         return yellow_mask
 
     elif color == 'green':
-        lower_green = np.array([36, 100, 100])
-        upper_green = np.array([86, 255, 255])
+        lower_green = np.array(GREEN_HSV_LOWER)
+        upper_green = np.array(GREEN_HSV_UPPER)
         green_mask = cv2.inRange(hsv_img, lower_green, upper_green)
         return green_mask
 
