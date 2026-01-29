@@ -237,7 +237,6 @@ class MyRobot(Supervisor):
                         if color == 'blue' and self.start_point is not None:
                             continue
                         elif color == 'yellow' and self.end_point is not None:
-                            print("=======")
                             continue
 
                         update_count = self.blue_pos_update_count if color == 'blue' else self.yellow_pos_update_count
@@ -262,7 +261,8 @@ class MyRobot(Supervisor):
                                 distance_to_prev = float(np.linalg.norm(current_pos - np.array(prev_pos)))
                             
                             # Primary condition: distance >= threshold AND update_count < 5
-                            if distance_to_prev >= self.estimation_distance_threshold and update_count < 5:
+                            if distance_to_prev >= 2 and update_count < 5:
+                                print("---distance to prev:", distance_to_prev)
                                 print(f"[Column] {color} update_count: {update_count}/5")
                                 self.camera_detection_signal = ('column', color)
                                 self.center_column_in_view(color)
