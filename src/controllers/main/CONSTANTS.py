@@ -91,7 +91,7 @@ CLOSURE_MARK_IOU_THRESHOLD = 0.4            # [UNUSED] IoU threshold to skip re-
 
 # --- COLOR DETECTION ---
 COLOR_DETECTION_DEPTH_THRESHOLD = 80        # [USED] Depth threshold (cm) for column detection
-COLOR_DETECTION_RED_PIXEL_RATIO = 0.3      # [USED] Pixel ratio threshold for red wall detection
+COLOR_DETECTION_RED_PIXEL_RATIO = 0.4      # [USED] Pixel ratio threshold for red wall detection
 RED_WALL_HSV_LOWER1 = [0, 120, 70]    # [USED] Red color lower bound 1 (HSV)
 RED_WALL_HSV_UPPER1 = [10, 255, 255]  # [USED] Red color upper bound 1 (HSV)
 RED_WALL_HSV_LOWER2 = [170, 120, 70]  # [USED] Red color lower bound 2 (HSV)
@@ -123,9 +123,9 @@ MAPPING_PROBABILITY_OBSTACLE = 0.7          # [UNUSED] Probability threshold for
 MAPPING_PROBABILITY_FREE = 0.5              # [UNUSED] Probability threshold for free space (hardcoded 0.5 in update_grid_map)
 
 # --- A* PATHFINDING ---
-ASTAR_INFLATION_LEVELS = [4, 3, 2]   # [USED] Inflation levels for escalating A*
+ASTAR_INFLATION_LEVELS = [5, 4, 3]   # [USED] Inflation levels for escalating A*
 ASTAR_EXPANSION_PIXELS = 3                 # [USED] Expansion around start/end points
-ASTAR_FRONTIER_INFLATION = 4          # [UNUSED] Inflation level for frontier pathfinding (hardcoded 13 in find_path_for_frontier)
+ASTAR_FRONTIER_INFLATION = 5          # [UNUSED] Inflation level for frontier pathfinding (hardcoded 13 in find_path_for_frontier)
 
 # ============================================================================
 # END HYPERPARAMETERS
