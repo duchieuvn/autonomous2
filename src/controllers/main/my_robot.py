@@ -154,33 +154,6 @@ class MyRobot(Supervisor):
         if self.stuck_thread:
             self.stuck_thread.join(timeout=1.0)
             print("[Stuck] Stopped stuck detection thread")
-        # ------------------------------------------------------------------
-    # Visualization helper (GridMap owns the pygame loop in map.py)
-    # ------------------------------------------------------------------
-    # def _update_vis_state(self, current_path=None, target_position=None, extra_points=None):
-    #     """Update GridMap visualization state in a thread-safe way.
-
-    #     GridMap.run_visualization_loop() (map.py) reads:
-    #     - robot_position, current_path, target_position, column_points
-    #     under map_object.vis_lock.
-    #     """
-    #     mo = self.map_object
-    #     with mo.vis_lock:
-    #         rx, ry = self.get_map_position()
-    #         mo.robot_position = (int(rx), int(ry))
-    #         mo.current_path = current_path
-    #         mo.target_position = target_position
-
-    #         # Build column_points without overwriting special markers accidentally.
-    #         pts = []
-    #         if self.blue_estimated_pos is not None:
-    #             pts.append((int(self.blue_estimated_pos[0]), int(self.blue_estimated_pos[1]), (0, 255, 255)))
-    #         if self.yellow_estimated_pos is not None:
-    #             pts.append((int(self.yellow_estimated_pos[0]), int(self.yellow_estimated_pos[1]), (255, 255, 0)))
-    #         if extra_points:
-    #             pts.extend(extra_points)
-
-    #         mo.column_points = pts
     
     def detect_green(self):
         """Detect green carpet in the bottom half of the camera image."""
@@ -204,6 +177,8 @@ class MyRobot(Supervisor):
         """Continuous detection loop with shared variable communication."""
         # Wait for sensors to initialize
         time.sleep(1.0)
+
+        estimation_distance_threshold = 1.5
         
         while self.camera_thread_running:
             # Check if camera is ready
@@ -261,7 +236,7 @@ class MyRobot(Supervisor):
                                 distance_to_prev = float(np.linalg.norm(current_pos - np.array(prev_pos)))
                             
                             # Primary condition: distance >= threshold AND update_count < 5
-                            if distance_to_prev >= 2 and update_count < 5:
+                            if distance_to_prev >= estimation_distance_threshold and update_count < 5:
                                 print("---distance to prev:", distance_to_prev)
                                 print(f"[Column] {color} update_count: {update_count}/5")
                                 self.camera_detection_signal = ('column', color)
@@ -283,13 +258,11 @@ class MyRobot(Supervisor):
                                             self.yellow_prev_estimate_position = current_pos
                                             self.yellow_pos_update_count += 1
                                             print(f"[Column] yellow update_count incremented to {self.yellow_pos_update_count}/5")
-                            elif distance_to_prev < self.estimation_distance_threshold:
-                                print(f"[Column] {color} too close to previous estimate position ({distance_to_prev:.3f}m < {self.estimation_distance_threshold}m), skipping estimation")
+                            elif distance_to_prev < estimation_distance_threshold:
+                                print(f"[Column] {color} too close to previous estimate position ({distance_to_prev:.3f}m < {estimation_distance_threshold}m), skipping estimation")
                             else:
                                 print(f"[Column] {color} update_count limit reached ({update_count}/5), skipping estimation")
                                 
-
-            
 
     def lidar_update_loop(self):
         """Continuous lidar mapping loop."""
@@ -372,59 +345,12 @@ class MyRobot(Supervisor):
         else:
             return False
 
-    # def is_turning(self):
-    #     left_speed = self.motors['fl'].getVelocity()
-    #     right_speed = self.motors['fr'].getVelocity()
-    #     turning_now = abs(left_speed - right_speed) > 0.08
-
-    #     if turning_now:
-    #         self.is_currently_turning = True
-    #         self.steps_since_turning = 0
-    #         return True
-
-    #     # not turning now
-    #     if self.is_currently_turning:
-    #         self.steps_since_turning += 1
-    #         # small cooldown for stabilization
-    #         if self.steps_since_turning < 3:
-    #             return True
-    #         self.is_currently_turning = False
-
-        return False
-    
     def is_turning(self):
         left_speed = self.motors['fl'].getVelocity()
         right_speed = self.motors['fr'].getVelocity()
         turning = abs(left_speed - right_speed) > 0.20
         return turning
 
-
-    # def is_turning(self):
-    #     # Check if the robot is turning, with 10-step cooldown after turning stops
-    #     left_speed = self.motors['fl'].getVelocity()
-    #     right_speed = self.motors['fr'].getVelocity()
-    #     turning_now = abs(left_speed - right_speed) > 0.08
-    #     return turning_now
-        
-    #     if turning_now:
-    #         # Currently turning
-    #         self.is_currently_turning = True
-    #         self.steps_since_turning = 0
-    #         return True
-    #     else:
-    #         # Not currently turning
-    #         if self.is_currently_turning:
-    #             # Turning just stopped, start cooldown
-    #             self.steps_since_turning += 1
-    #             if self.steps_since_turning < 3:
-    #                 return True  # Still in cooldown period
-    #             else:
-    #                 # Cooldown complete
-    #                 self.is_currently_turning = False
-    #                 return False
-    #         else:
-    #             # Not turning and not in cooldown
-    #             return False
 
     def stop_motor(self):
         for motor in self.motors.values():
