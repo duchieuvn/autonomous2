@@ -100,6 +100,11 @@ class MyRobot(Supervisor):
         # Track positions where column distance estimation was performed
         self.blue_estimation_positions = []  # List of positions where blue column was estimated
         self.yellow_estimation_positions = []  # List of positions where yellow column was estimated
+        
+        # Track previous estimation positions for distance checking (HIGHEST PRIORITY)
+        self.blue_prev_estimate_position = None  # Previous position when blue was estimated
+        self.yellow_prev_estimate_position = None  # Previous position when yellow was estimated
+        self.estimation_distance_threshold = 0.5  # meters - minimum distance to perform another estimation
 
 
     def start_camera_thread(self):
@@ -207,8 +212,10 @@ class MyRobot(Supervisor):
                 continue
                 
             # Only write to shared variable if it's None (main thread has processed previous signal)
+            time.sleep(0.1)  # Check every 100ms
             with self.detection_lock:
                 if self.camera_detection_signal is None:
+
                     # Check for red wall
                     red_wall = self.there_is_red_wall()
                     if red_wall:
@@ -221,44 +228,46 @@ class MyRobot(Supervisor):
                         continue
                         
                     # Check for columns
+                    if self.found_all_2_columns():
+                        continue
+                    
+                    # Check for columns
                     color = self.detect_column()
                     if color:
                         if color == 'blue' and self.start_point is not None:
                             continue
                         elif color == 'yellow' and self.end_point is not None:
+                            print("=======")
                             continue
-
-                        print(f"[Column] Detected {color} column")
 
                         update_count = self.blue_pos_update_count if color == 'blue' else self.yellow_pos_update_count
                         column_mask = utils.segment_color(self.get_hsv_image(), color)
+                        column_distance = self.estimate_column_distance(color) 
                         
                         if self.column_close(column_mask):
                             self.center_column_in_view(color)
-                            print(f"Column {color} is close")
+                            print(f"Column {color} is close", column_distance)
                             self.mark_column(color)
                             self.turn_right_milisecond(600)
                         
-                        elif update_count < 5:
-                            print(f"[Column] {color} update_count: {update_count}/5")
-                            self.camera_detection_signal = ('column', color)
-                            self.center_column_in_view(color)
-                            ratio = self.get_column_center_ratio(color)
-                            if ratio > 0.15:
-                                # Check if robot is near a previous estimation position
-                                current_position = self.get_position()
-                                estimation_positions = self.blue_estimation_positions if color == 'blue' else self.yellow_estimation_positions
-                                
-                                # Check distance to all previous estimation positions
-                                too_close = False
-                                for prev_pos in estimation_positions:
-                                    distance_to_prev = np.linalg.norm(current_position - prev_pos)
-                                    if distance_to_prev < 0.5:
-                                        too_close = True
-                                        print(f"[Column] Skipping {color} estimation - too close to previous position ({distance_to_prev:.3f}m)")
-                                        break
-                                
-                                if not too_close:
+
+                        else:
+                            # Check distance from previous estimation position (HIGHEST PRIORITY)
+                            current_pos = self.get_position()
+                            prev_pos = self.blue_prev_estimate_position if color == 'blue' else self.yellow_prev_estimate_position
+                            
+                            if prev_pos is None:
+                                distance_to_prev = float('inf')
+                            else:
+                                distance_to_prev = float(np.linalg.norm(current_pos - np.array(prev_pos)))
+                            
+                            # Primary condition: distance >= threshold AND update_count < 5
+                            if distance_to_prev >= self.estimation_distance_threshold and update_count < 5:
+                                print(f"[Column] {color} update_count: {update_count}/5")
+                                self.camera_detection_signal = ('column', color)
+                                self.center_column_in_view(color)
+                                ratio = self.get_column_center_ratio(color)
+                                if ratio > 0.15:
                                     column_distance = self.estimate_column_distance(color) 
                                     if column_distance is not None:
                                         print(f"---Estimated {color} column distance: {column_distance} cm")
@@ -266,21 +275,19 @@ class MyRobot(Supervisor):
                                         column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
                                         self.update_column_estimation(color, column_map_position)
                                         print(f"Updated {color} column position")
-                                        
-                                        # Store the current position
                                         if color == 'blue':
-                                            self.blue_estimation_positions.append(current_position.copy())
+                                            self.blue_prev_estimate_position = current_pos
                                             self.blue_pos_update_count += 1
                                             print(f"[Column] blue update_count incremented to {self.blue_pos_update_count}/5")
                                         elif color == 'yellow':
-                                            self.yellow_estimation_positions.append(current_position.copy())
+                                            self.yellow_prev_estimate_position = current_pos
                                             self.yellow_pos_update_count += 1
                                             print(f"[Column] yellow update_count incremented to {self.yellow_pos_update_count}/5")
-                        else:
-                            print(f"[Column] {color} update_count limit reached ({update_count}/5), skipping estimation")
+                            elif distance_to_prev < self.estimation_distance_threshold:
+                                print(f"[Column] {color} too close to previous estimate position ({distance_to_prev:.3f}m < {self.estimation_distance_threshold}m), skipping estimation")
+                            else:
+                                print(f"[Column] {color} update_count limit reached ({update_count}/5), skipping estimation")
                                 
-                                
-            time.sleep(0.1)  # Check every 100ms
 
             
 
@@ -1249,7 +1256,17 @@ class MyRobot(Supervisor):
 
             map_diff = utils.percentage_map_differences(previous_map, map_object.grid_map)
             frontier_regions, chosen_frontier, path_to_frontier = self.handle_frontier_exploration(count, map_diff)
-            
+
+            # Fallback: no frontier/path -> pick random nearby freespace
+            if path_to_frontier is None:
+                fallback_frontier = self.select_random_freespace_near_robot()
+                if fallback_frontier is not None:
+                    chosen_frontier = fallback_frontier
+                    path_to_frontier = self.map_object.find_path_for_frontier(
+                        self.get_map_position(),
+                        chosen_frontier
+                    )
+
             # select only when nothing active
             if active_path is None and path_to_frontier:
                 active_path = path_to_frontier
@@ -2355,6 +2372,34 @@ class MyRobot(Supervisor):
             jitter_y = random.randint(-max_jitter, max_jitter)
             goal = (int(goal[0] + jitter_x), int(goal[1] + jitter_y)) 
         return goal
+
+    def select_random_freespace_near_robot(self, radius=40, max_tries=200):
+        """Pick a random FREESPACE cell near the robot (map coords)."""
+        grid = self.map_object.grid_map
+        if grid is None:
+            return None
+
+        map_h, map_w = grid.shape
+        rx, ry = self.get_map_position()
+
+        for _ in range(max_tries):
+            dx = random.randint(-radius, radius)
+            dy = random.randint(-radius, radius)
+            x = int(rx + dx)
+            y = int(ry + dy)
+
+            if x < 0 or x >= map_w or y < 0 or y >= map_h:
+                continue
+
+            if grid[y, x] != FREESPACE:
+                continue
+
+            if self.map_object.there_is_obstacle((x, y)):
+                continue
+
+            return (x, y)
+
+        return None
 
         # GREEN CARPET LOGIC ---------------------------------------------
 
