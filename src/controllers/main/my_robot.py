@@ -226,42 +226,44 @@ class MyRobot(Supervisor):
                         
 
                         else:
-                            # Check distance from previous estimation position (HIGHEST PRIORITY)
-                            current_pos = self.get_position()
-                            prev_pos = self.blue_prev_estimate_position if color == 'blue' else self.yellow_prev_estimate_position
+                            self.camera_detection_signal = ('column', color)
+
+                            # # Check distance from previous estimation position (HIGHEST PRIORITY)
+                            # current_pos = self.get_position()
+                            # prev_pos = self.blue_prev_estimate_position if color == 'blue' else self.yellow_prev_estimate_position
                             
-                            if prev_pos is None:
-                                distance_to_prev = float('inf')
-                            else:
-                                distance_to_prev = float(np.linalg.norm(current_pos - np.array(prev_pos)))
+                            # if prev_pos is None:
+                            #     distance_to_prev = float('inf')
+                            # else:
+                            #     distance_to_prev = float(np.linalg.norm(current_pos - np.array(prev_pos)))
                             
-                            # Primary condition: distance >= threshold AND update_count < 5
-                            if distance_to_prev >= estimation_distance_threshold and update_count < 5:
-                                print("---distance to prev:", distance_to_prev)
-                                print(f"[Column] {color} update_count: {update_count}/5")
-                                self.camera_detection_signal = ('column', color)
-                                self.center_column_in_view(color)
-                                ratio = self.get_column_center_ratio(color)
-                                if ratio > 0.15:
-                                    column_distance = self.estimate_column_distance(color) 
-                                    if column_distance is not None:
-                                        print(f"---Estimated {color} column distance: {column_distance} cm")
-                                        column_position = self.position_ahead(column_distance / 100) 
-                                        column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
-                                        self.update_column_estimation(color, column_map_position)
-                                        print(f"Updated {color} column position")
-                                        if color == 'blue':
-                                            self.blue_prev_estimate_position = current_pos
-                                            self.blue_pos_update_count += 1
-                                            print(f"[Column] blue update_count incremented to {self.blue_pos_update_count}/5")
-                                        elif color == 'yellow':
-                                            self.yellow_prev_estimate_position = current_pos
-                                            self.yellow_pos_update_count += 1
-                                            print(f"[Column] yellow update_count incremented to {self.yellow_pos_update_count}/5")
-                            elif distance_to_prev < estimation_distance_threshold:
-                                print(f"[Column] {color} too close to previous estimate position ({distance_to_prev:.3f}m < {estimation_distance_threshold}m), skipping estimation")
-                            else:
-                                print(f"[Column] {color} update_count limit reached ({update_count}/5), skipping estimation")
+                            # # Primary condition: distance >= threshold AND update_count < 5
+                            # if distance_to_prev >= estimation_distance_threshold and update_count < 5:
+
+                            #     print("---distance to prev:", distance_to_prev)
+                            #     print(f"[Column] {color} update_count: {update_count}/5")
+                            #     self.center_column_in_view(color)
+                            #     ratio = self.get_column_center_ratio(color)
+                            #     if ratio > 0.15:
+                            #         column_distance = self.estimate_column_distance(color) 
+                            #         if column_distance is not None:
+                            #             print(f"---Estimated {color} column distance: {column_distance} cm")
+                            #             column_position = self.position_ahead(column_distance / 100) 
+                            #             column_map_position = self.convert_to_map_coordinates(column_position[0], column_position[1])
+                            #             self.update_column_estimation(color, column_map_position)
+                            #             print(f"Updated {color} column position")
+                            #             if color == 'blue':
+                            #                 self.blue_prev_estimate_position = current_pos
+                            #                 self.blue_pos_update_count += 1
+                            #                 print(f"[Column] blue update_count incremented to {self.blue_pos_update_count}/5")
+                            #             elif color == 'yellow':
+                            #                 self.yellow_prev_estimate_position = current_pos
+                            #                 self.yellow_pos_update_count += 1
+                            #                 print(f"[Column] yellow update_count incremented to {self.yellow_pos_update_count}/5")
+                            # elif distance_to_prev < estimation_distance_threshold:
+                            #     print(f"[Column] {color} too close to previous estimate position ({distance_to_prev:.3f}m < {estimation_distance_threshold}m), skipping estimation")
+                            # else:
+                            #     print(f"[Column] {color} update_count limit reached ({update_count}/5), skipping estimation")
                                 
 
     def lidar_update_loop(self):
@@ -854,7 +856,7 @@ class MyRobot(Supervisor):
             return np.mean(valid_depths)  # Fallback to average depth if max is too small
         
         horizontal_distance_cm = np.sqrt(max_depth_cm ** 2 - column_height_cm ** 2)
-        return horizontal_distance_cm 
+        return horizontal_distance_cm + 10.0
 
     def align_to_column(self, color):
         print("Aligning to column...")
@@ -1048,6 +1050,7 @@ class MyRobot(Supervisor):
 
     def update_column_estimation_from_view(self, color):
         """Passive estimation update (no steering). Safe to call during path following."""
+        print("==---=== column while path following===---==")
         ratio = self.get_column_center_ratio(color)
         if ratio <= 0.08:
             return
@@ -1507,8 +1510,9 @@ class MyRobot(Supervisor):
                         #         return False
 
 
-                if isinstance(signal, tuple) and len(signal):
+                if isinstance(signal, tuple) and len(signal) == 2:
                     _, color = signal
+                    self.stop_motor()
                     self.update_column_estimation_from_view(color)
 
                 # 3) FRONT OBSTACLE → REVERSE → WAIT → DROP FRONTIER
@@ -2553,7 +2557,6 @@ class MyRobot(Supervisor):
             else:
                 # Too close and not large enough: Skip marking
                 self.green_carpet_active = False
-                print(f"[Green Carpet] Skipping mark. Too close to known patch and not large enough")
                 return False 
             
         for _ in range(15):
@@ -2598,7 +2601,6 @@ class MyRobot(Supervisor):
             self.last_green_mark_time = time.time()
             self.last_green_carpet_points = [(int(pts[i, 0]), int(pts[i, 1])) for i in range(len(pts))]
 
-            print(f"[Map Update] Successfully marked new persistent green carpet ({current_detection_size} pixels).")
             self.green_carpet_active = False
             return True
             
