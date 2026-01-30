@@ -843,8 +843,8 @@ class MyRobot(Supervisor):
             # If the column occupies a lot of pixels, treat it as "close enough" and allow marking.
             area_ratio = float(np.count_nonzero(column_mask)) / float(column_mask.size)
             if area_ratio > 0.20:  # close in image -> likely right in front
-                return 0.0  # force "close" behavior in caller
-            return 0.0
+                return 0.5  # force "close" behavior in caller
+            return None # too far to estimate
         
         # Calculate horizontal distance using Pythagorean theorem
         max_depth_cm = float(np.max(valid_depths))
