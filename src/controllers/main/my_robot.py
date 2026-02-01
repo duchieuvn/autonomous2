@@ -933,7 +933,7 @@ class MyRobot(Supervisor):
 
             # Occasionally bias frontier choice near known column estimates/start/end
             if random.random() < 0.7:
-                chosen_frontier = self.select_frontier_near_column()
+                chosen_frontier = self.select_random_frontier_near_column()
                 chasing_column = (chosen_frontier is not None)
                 print("----Frontire near column---")
 
@@ -1454,7 +1454,6 @@ class MyRobot(Supervisor):
                         distance_to_prev = float(np.linalg.norm(current_pos - np.array(prev_pos)))
                     
                     # Primary condition: distance >= threshold
-                    print("-------distance to prev:", distance_to_prev)
                     if distance_to_prev >= 0.8:
                         self.stop_motor()
                         self.center_column_in_view(color)
@@ -2233,23 +2232,33 @@ class MyRobot(Supervisor):
         
         return (centroid_x, centroid_y)
 
-    def select_frontier_near_column(self, max_jitter=8):
+    def select_random_frontier_near_column(self, max_jitter=8):
+        targets = []
         if self.yellow_estimated_pos is not None and self.end_point is None:
-            goal = self.yellow_estimated_pos
-            print("----YELLOW frontier")
-        elif self.blue_estimated_pos is not None and self.start_point is None:
-            goal = self.blue_estimated_pos 
-            print("----BLUE frontier")
-        else:
+            targets.append(('yellow', self.yellow_estimated_pos))
+        if self.blue_estimated_pos is not None and self.start_point is None:
+            targets.append(('blue', self.blue_estimated_pos))
+            
+        if not targets:
             return None
-        jitter_x = random.randint(-max_jitter, max_jitter)
-        jitter_y = random.randint(-max_jitter, max_jitter)
-        goal = (int(goal[0] + jitter_x), int(goal[1] + jitter_y))
-        while self.map_object.there_is_obstacle(goal):
+            
+        color, pos = random.choice(targets)
+        print(f"----{color.upper()} random frontier")
+        
+        map_h, map_w = self.map_object.grid_map.shape
+        
+        for _ in range(100): # Limit tries to avoid infinite loop
             jitter_x = random.randint(-max_jitter, max_jitter)
             jitter_y = random.randint(-max_jitter, max_jitter)
-            goal = (int(goal[0] + jitter_x), int(goal[1] + jitter_y)) 
-        return goal
+            gx = int(pos[0] + jitter_x)
+            gy = int(pos[1] + jitter_y)
+            
+            # Boundary check
+            if 0 <= gx < map_w and 0 <= gy < map_h:
+                if self.map_object.grid_map[gy, gx] == FREESPACE:
+                    return (gx, gy)
+        
+        return None # Fallback if no freespace found nearby
 
     def select_random_freespace_near_robot(self, radius=40, max_tries=200):
         """Pick a random FREESPACE cell near the robot (map coords)."""
