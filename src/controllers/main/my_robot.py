@@ -1434,6 +1434,7 @@ class MyRobot(Supervisor):
                 # --------------------------------------------------
                 if signal == 'green_carpet' or timestep_counter % CARPET_CHECK_EVERY == 0:
                     self.stop_motor()
+                    # time.sleep(0.5)
                     
                     marked = self.mark_green_carpet_permanently(min_pixel_threshold=10)
                     if marked:
@@ -2529,6 +2530,7 @@ class MyRobot(Supervisor):
         # --- STEP 3: ALIGNMENT (CALIBRATION) - ONLY IF WORTH MARKING ---
         self.align_to_green_carpet()
         self.stop_motor()
+        time.sleep(0.5)
         
         # --- STEP 4: FULL DETECTION (POST-ALIGNMENT) ---
         current_map_points = self.get_green_carpet_points() 
