@@ -769,6 +769,33 @@ class MyRobot(Supervisor):
             print(f"[warning] Failed to mark corridor closure: {e}")
             return False
 
+    def is_column_fully_in_frame(self, hsv, color, top_strip_height=50):
+        """
+        Checks if the specified color (column) is fully inside the camera frame.
+        Returns True if there are no color pixels in the top strip of the frame,
+        indicating the column is fully visible (not cut off at the top).
+        
+        Parameters:
+            hsv: HSV image from camera
+            color: 'blue' or 'yellow'
+            top_strip_height: Height of the top strip to check (in pixels)
+        
+        Returns:
+            bool: True if no color pixels in top strip, False otherwise
+        """
+        if hsv is None:
+            return False
+        
+        # Segment the color
+        color_mask = utils.segment_color(hsv, color)
+        
+        # Check the top strip for any color pixels
+        top_strip = color_mask[:top_strip_height, :]
+        color_pixels_in_top = cv2.countNonZero(top_strip)
+        
+        # If no color pixels in top, column is fully in frame
+        return color_pixels_in_top == 0
+
     def estimate_column_distance(self, color):
         """Estimate horizontal distance to detected column using depth and known height."""
         self.stop_motor()
@@ -800,13 +827,19 @@ class MyRobot(Supervisor):
         
         # Calculate horizontal distance using Pythagorean theorem
         max_depth_cm = float(np.max(valid_depths))
+        if not self.is_column_fully_in_frame(hsv_img, color):
+            print(f"Max depth: {max_depth_cm}")
+            if max_depth_cm < 110.0:
+                max_depth_cm = max_depth_cm * 1.25
+            else:
+                max_depth_cm = max_depth_cm * 1.1
         column_height_cm = 125.0
         
         if max_depth_cm <= column_height_cm:
             return np.mean(valid_depths)  # Fallback to average depth if max is too small
         
         horizontal_distance_cm = np.sqrt(max_depth_cm ** 2 - column_height_cm ** 2)
-        return horizontal_distance_cm + 20.0
+        return horizontal_distance_cm + 10.0
 
     def align_to_column(self, color):
 
@@ -905,7 +938,8 @@ class MyRobot(Supervisor):
     #     self.stop_motor()
 
     def slowly_360(self):
-        self.set_robot_velocity(3, -3)
+        
+        self.set_robot_velocity(-3, 3)
         steps_taken = 0
         target_steps = 8500 // self.time_step
         
@@ -917,6 +951,7 @@ class MyRobot(Supervisor):
             # Check for detection signals
             with self.detection_lock:
                 if self.camera_detection_signal is not None:
+                    print("----Stopping 360 for detection---")
                     break
         
         self.stop_motor()
@@ -932,7 +967,7 @@ class MyRobot(Supervisor):
             frontier_regions = self.map_object.detect_frontiers()
 
             # Occasionally bias frontier choice near known column estimates/start/end
-            if random.random() < 0.7:
+            if random.random() < 0.9:
                 chosen_frontier = self.select_random_frontier_near_column()
                 chasing_column = (chosen_frontier is not None)
                 print("----Frontire near column---")
@@ -1061,7 +1096,7 @@ class MyRobot(Supervisor):
         frontier_regions = []
         last_position = self.get_position()
 
-        self.slowly_360()
+        # self.slowly_360()
 
         while self.step(self.time_step) != -1 and not self.found_all_2_columns():
 
@@ -1344,7 +1379,7 @@ class MyRobot(Supervisor):
     #                     return
     #     self.stop_motor()
 
-    def frontier_following(self, path, vis=None, replan_interval=60, drop_on_red_wall=True, use_global_planner=False):
+    def frontier_following(self, path, vis=None, replan_interval=30, drop_on_red_wall=True, use_global_planner=False):
 
         """
         Frontier following with:
@@ -1366,7 +1401,7 @@ class MyRobot(Supervisor):
 
         target_index = 5
         OBSTACLE_THRESHOLD = 0.08   # meters
-        REVERSE_DISTANCE = 0.18     # meters
+        REVERSE_DISTANCE = 0.25     # meters
         MAP_UPDATE_WAIT_STEPS = 40  # allow LiDAR/map to update
         CARPET_CHECK_EVERY = 10     # timesteps (cheap + safe)
         MAX_STUCK_ATTEMPTS = 3      # maximum stuck events before dropping frontier
@@ -1475,7 +1510,7 @@ class MyRobot(Supervisor):
                     self.stop_motor()
 
                     back_speed = 0.12  # m/s
-                    dt = (TIME_STEP + 50) / 1000.0
+                    dt = (TIME_STEP + 70) / 1000.0
                     steps = max(1, int(REVERSE_DISTANCE / (back_speed * dt)))
 
                     lw, rw = self.velocity_to_wheel_speeds(-back_speed, 0.0)
@@ -1513,17 +1548,17 @@ class MyRobot(Supervisor):
                 # --------------------------------------------------
                 # 4) PERIODIC TIMESTEP-BASED REPLANNING
                 # --------------------------------------------------
-                # if timestep_counter % replan_interval == 0:
-                #     try:
-                #         current_start = self.get_map_position()
-                #         new_path = self.map_object.find_path_for_frontier(current_start, frontier_goal)
-                #         if new_path and len(new_path) > 5:
-                #             print("[Replan] Periodic path update")
-                #             current_path = new_path
-                #             target_index = 5
-                #             break
-                #     except Exception as e:
-                #         print(f"[Replan] Failed: {e}")
+                if timestep_counter % replan_interval == 0:
+                    try:
+                        current_start = self.get_map_position()
+                        new_path = self.map_object.find_path_for_frontier(current_start, frontier_goal)
+                        if new_path and len(new_path) > 5:
+                            print("[Replan] Periodic path update")
+                            current_path = new_path
+                            target_index = 5
+                            break
+                    except Exception as e:
+                        print(f"[Replan] Failed: {e}")
 
                 # --- Visualization update (GridMap thread draws these) ---
                 with self.map_object.vis_lock:
@@ -1836,7 +1871,7 @@ class MyRobot(Supervisor):
                     self.stop_motor()
 
                     back_speed = 0.12  # m/s
-                    dt = (TIME_STEP + 50) / 1000.0
+                    dt = (TIME_STEP + 80) / 1000.0
                     steps = max(1, int(REVERSE_DISTANCE / (back_speed * dt)))
 
                     lw, rw = self.velocity_to_wheel_speeds(-back_speed, 0.0)
@@ -2120,12 +2155,38 @@ class MyRobot(Supervisor):
         return False
     
     def recover_from_stuck(self, turn_duration=(400, 600)):
-        speeds = random.choice([(-6, -8), (-8, -6)])
+        speeds = random.choice([(-8, -8), (-8, -8)])
         self.set_robot_velocity(speeds[0], speeds[1])
-        self.step(500)
+        # check if there is enough space to back up
+        # checking back clearanc with get_back_clearance_distance()
+
+        distances = self.get_distances()
+        if distances[1] > 0.25 and distances[3] > 0.25:
+            print("reversing longer")
+            self.step(500)
+        else:
+            print("reversing shorter")
+            self.step(250)
+
+        
+        
+        self.stop_motor()
+         # Wait for lidar thread / map update
+        for _ in range(40):
+            if self.step(self.time_step) == -1:
+                self.stop_motor()
+                return False
 
         random_duration = random.randint(turn_duration[0], turn_duration[1])
-        self.turn_right_milisecond(random_duration)
+        # turn randomly left or right
+        if random.random() < 0.5:
+            self.turn_left_milisecond(random_duration)
+        else:
+            self.turn_right_milisecond(random_duration)
+        self.set_robot_velocity(5, 5)
+        self.step(250)
+
+       
         # while min(distances[0], distances[2]) < 0.05:
         #     print('Still closed to obstacle')
         #     self.step(20)
@@ -2256,7 +2317,7 @@ class MyRobot(Supervisor):
             
             # Boundary check
             if 0 <= gx < map_w and 0 <= gy < map_h:
-                if self.map_object.grid_map[gy, gx] == FREESPACE:
+                if self.map_object.grid_map[gy, gx] == FREESPACE or self.map_object.grid_map[gy, gx] == UNKNOWN:
                     return (gx, gy)
         
         return None # Fallback if no freespace found nearby
@@ -2399,6 +2460,8 @@ class MyRobot(Supervisor):
         if len(d) < 4:
             return float('inf')
         return float(min(d[1], d[3]))  # rl, rr
+    
+
 
     def align_to_green_carpet(self):
         """
@@ -2530,7 +2593,7 @@ class MyRobot(Supervisor):
         # --- STEP 3: ALIGNMENT (CALIBRATION) - ONLY IF WORTH MARKING ---
         self.align_to_green_carpet()
         self.stop_motor()
-        time.sleep(0.5)
+        time.sleep(1)
         
         # --- STEP 4: FULL DETECTION (POST-ALIGNMENT) ---
         current_map_points = self.get_green_carpet_points() 
