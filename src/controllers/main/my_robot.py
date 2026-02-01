@@ -907,7 +907,7 @@ class MyRobot(Supervisor):
     def slowly_360(self):
         self.set_robot_velocity(3, -3)
         steps_taken = 0
-        target_steps = 8000 // self.time_step
+        target_steps = 8500 // self.time_step
         
         while steps_taken < target_steps:
             if self.step(self.time_step) == -1:
@@ -1061,6 +1061,8 @@ class MyRobot(Supervisor):
         frontier_regions = []
         last_position = self.get_position()
 
+        self.slowly_360()
+
         while self.step(self.time_step) != -1 and not self.found_all_2_columns():
 
             # Check for camera detection signals from background thread
@@ -1132,7 +1134,7 @@ class MyRobot(Supervisor):
 
             # Fallback: no frontier/path -> pick random nearby freespace
             if path_to_frontier is None:
-                if random.random() < 0.55:
+                if random.random() < 0.2:
                     fallback_frontier = self.select_random_freespace_near_robot()
                     if fallback_frontier is not None:
                         chosen_frontier = fallback_frontier
@@ -1436,6 +1438,7 @@ class MyRobot(Supervisor):
                     marked = self.mark_green_carpet_permanently(min_pixel_threshold=10)
                     if marked:
                         self.stop_motor()
+                        time.sleep(0.5)
 
                         return False
 
@@ -2119,7 +2122,7 @@ class MyRobot(Supervisor):
     def recover_from_stuck(self, turn_duration=(400, 600)):
         speeds = random.choice([(-6, -8), (-8, -6)])
         self.set_robot_velocity(speeds[0], speeds[1])
-        self.step(300)
+        self.step(500)
 
         random_duration = random.randint(turn_duration[0], turn_duration[1])
         self.turn_right_milisecond(random_duration)
@@ -2128,6 +2131,7 @@ class MyRobot(Supervisor):
         #     self.step(20)
         #     time.sleep(2)
         #     distances = self.get_distances()
+    
 
     def plan_and_follow_frontier(self, top_k=3):
         """Select a frontier target, plan a path, and follow it using GridMap manager."""
@@ -2292,6 +2296,11 @@ class MyRobot(Supervisor):
         # --- 1. Color Segmentation and Pixel Selection ---
         # Uses centralized GREEN_HSV_LOWER/UPPER from CONSTANTS.py via utils.segment_color()
         green_mask = utils.segment_color(hsv_img, 'green')
+        
+        # --- Pixel Expansion using a kernel ---
+        kernel_size = GREEN_CARPET_DILATION_KERNEL_SIZE
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
+        green_mask = cv2.dilate(green_mask, kernel, iterations=GREEN_CARPET_DILATION_ITERATIONS)
         
         h_start = int(self.cam_height * 0.5) 
         green_mask[:h_start, :] = 0

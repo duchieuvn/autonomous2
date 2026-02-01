@@ -102,6 +102,8 @@ YELLOW_HSV_LOWER = [20, 100, 100]     # [USED] Yellow color lower bound (HSV)
 YELLOW_HSV_UPPER = [35, 255, 255]     # [USED] Yellow color upper bound (HSV)
 GREEN_HSV_LOWER = [36, 100, 100]      # [USED] Green color lower bound (HSV)
 GREEN_HSV_UPPER = [86, 255, 255]      # [USED] Green color upper bound (HSV)
+GREEN_CARPET_DILATION_KERNEL_SIZE = 10     # Kernel size for expanding green pixels
+GREEN_CARPET_DILATION_ITERATIONS = 1      # Number of dilation iterations
 
 # --- TURNING & TURNING COOLDOWN ---
 TURN_ROTATION_COOLDOWN_STEPS = 10           # [UNUSED] Steps cooldown after turning stops (used as hardcoded 10 in is_turning method)
