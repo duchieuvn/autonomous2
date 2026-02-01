@@ -1096,7 +1096,7 @@ class MyRobot(Supervisor):
         frontier_regions = []
         last_position = self.get_position()
 
-        # self.slowly_360()
+        self.slowly_360()
 
         while self.step(self.time_step) != -1 and not self.found_all_2_columns():
 
