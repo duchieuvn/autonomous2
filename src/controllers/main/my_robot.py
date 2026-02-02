@@ -1550,7 +1550,7 @@ class MyRobot(Supervisor):
                     self.stop_motor()
                     # time.sleep(0.5)
                     
-                    marked = self.mark_green_carpet_permanently(min_pixel_threshold=10)
+                    marked = self.mark_green_carpet_permanently(min_pixel_threshold=10000)
                     if marked:
                         self.stop_motor()
                         time.sleep(0.5)
@@ -1925,7 +1925,7 @@ class MyRobot(Supervisor):
                 # -----------------------------
                 if timestep_counter % CARPET_CHECK_EVERY == 0:
                     try:
-                        self.mark_green_carpet_permanently(min_pixel_threshold=10)
+                        self.mark_green_carpet_permanently(min_pixel_threshold=10000)
                     except Exception:
                         pass
 
