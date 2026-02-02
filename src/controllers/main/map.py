@@ -63,7 +63,10 @@ class GridMap():
         return False
 
     def update_log_odds(self, robot_pos, lidar_map_points):
-        """Update log-odds map using Bresenham for each LIDAR point in map coordinates."""
+        """Update log-odds map using Bresenham for each LIDAR point in map coordinates.
+        
+        Only updates cells with log_odds < 3. Cells with log_odds >= 3 are locked and remain unchanged.
+        """
             
         for map_target in lidar_map_points:
             points = utils.bresenham_line(robot_pos, map_target)
@@ -71,7 +74,8 @@ class GridMap():
             # Free points: all except the last
             for x, y in points[:-1]:
                 if 0 <= x < MAP_SIZE and 0 <= y < MAP_SIZE:
-                    self.log_odds[y, x] -= 0.36
+                    if self.log_odds[y, x] < 3.5:
+                        self.log_odds[y, x] -= 0.36
 
             # Occupied cell: last one
             x, y = points[-1]
