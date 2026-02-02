@@ -1,0 +1,332 @@
+\documentclass{article}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage[tc]{titlepic}
+\usepackage{caption}
+\usepackage{booktabs}
+\usepackage{float}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[none]{hyphenat}
+\usepackage[
+  backend=biber,
+  style=ieee,
+  sorting=none
+    ]{biblatex}
+\usepackage[
+  a4paper,
+  left=2.5cm,
+  right=2.5cm,
+  top=2.5cm,
+  bottom=2.5cm
+]{geometry}
+\usepackage{indentfirst}
+
+\addbibresource{./assets/literature.bib}
+\begin{document}
+
+% Title and author
+\begin{titlepage}
+  \begin{center}
+    \vspace*{1cm}
+
+    \begin{center}
+      {\large Ostbayerische Technische Hochschule Amberg-Weiden}\\
+      {\small Department of Electrical Engineering, Media and Computer Science}
+    \end{center}
+
+    \vspace{2cm}
+    
+    {\fontsize{24}{36}\selectfont 
+        \bfseries 
+        Autonomous Navigation in Simulation\\[0.5cm]
+        {\normalsize Navigating from Blue to Yellow Pillar}
+    }
+
+    \vspace{3cm}
+
+    {\large \textbf{Student}}
+
+    \vspace{0.5cm}
+
+    {\large Tran Thai Duc Hieu}
+
+    \vspace{2.5cm}
+
+    {\large \textbf{Supervised by}}
+
+    \vspace{0.5cm}
+
+    {\large Prof. Dr. Thomas Nierhoff}
+
+    \vspace{3cm}
+
+    
+    \vfill
+
+    {\large \today}
+  \end{center}
+\end{titlepage}
+
+
+\newpage
+
+\section{Approach}
+
+\subsection{Overview}
+
+This project implements an autonomous navigation system for a mobile robot in a simulated Webots environment. The robot's task is to navigate from a blue pillar (starting point) to a yellow pillar (goal) while avoiding obstacles, particularly green carpet regions. The system operates in two phases: an exploration phase where the robot maps the environment and locates both pillars, followed by a final execution phase where it traverses the optimal path from start to goal.
+
+The core strategy combines frontier-based exploration for systematic environment coverage with reactive obstacle avoidance, enabling the robot to handle both pre-mapped obstacles and dynamic environmental features detected during navigation.
+
+\subsection{Strategy Overview}
+
+The autonomous navigation strategy is built on three core principles:
+
+\subsubsection*{1. Continuous Perception}
+Vision-based detection runs continuously in background threads, identifying three critical features in real-time:
+\begin{itemize}
+    \item \textbf{Blue and yellow pillars:} Landmark detection using camera color segmentation and depth estimation
+    \item \textbf{Red walls:} Obstacle boundaries requiring closure marking
+    \item \textbf{Green carpet:} Toxic regions to be avoided at all costs
+\end{itemize}
+
+\subsubsection*{2. Frontier-based Exploration}
+Rather than random exploration, the robot systematically explores by targeting frontier regions—the boundary between known free space and unknown territory. Frontier targets are prioritized by:
+\begin{enumerate}
+    \item Proximity to detected pillars (highest priority)
+    \item Size of unexplored regions (explore large unknown areas first)
+    \item Random selection (fallback strategy)
+\end{enumerate}
+
+\subsubsection*{3. Reactive Path Following}
+Global paths (computed via A*) are followed locally using Dynamic Window Approach (DWA), enabling responsive collision avoidance without replanning the entire path.
+
+\subsubsection*{Exploration Algorithm}
+
+\begin{small}
+\begin{verbatim}
+While (blue_pillar NOT found OR yellow_pillar NOT found):
+    // Sensor updates run continuously in background
+    
+    // High-priority events
+    IF red_wall_detected THEN
+        AlignToRedWall()
+        MarkClosureRegion()
+        DropCurrentPath()
+        CONTINUE
+    END IF
+    
+    IF green_carpet_detected THEN
+        MarkAsObstacleOnMap()
+    END IF
+    
+    // Landmark detection
+    IF camera_detects_blue_pillar THEN
+        AlignAndMark(blue_position)
+    ELSE IF camera_detects_yellow_pillar THEN
+        AlignAndMark(yellow_position)
+    END IF
+    
+    // Frontier-based exploration
+    frontier_target = SelectFrontierTarget(grid_map, priorities)
+    IF frontier_target EXISTS THEN
+        path = FindPath_AStar(current_pos, frontier_target)
+        FollowPath_DWA(path, obstacle_callback)
+    END IF
+END WHILE
+\end{verbatim}
+\end{small}
+
+\subsubsection*{Final Path Execution}
+
+Once both pillars are located, the robot executes the final phase:
+
+\begin{small}
+\begin{verbatim}
+final_path = FindPath_AStar(blue_position, yellow_position)
+waypoints = ExtractWaypoints(final_path)
+
+FOR EACH waypoint IN waypoints:
+    WHILE distance_to_waypoint > threshold:
+        IF obstacle_detected THEN
+            ReverseAndReplan()
+            BREAK
+        END IF
+        
+        velocity, angular_vel = DWA_Planner(waypoint)
+        SetMotorCommands(velocity, angular_vel)
+        
+        Step simulation
+    END WHILE
+END FOR
+\end{verbatim}
+\end{small}
+
+\newpage
+
+\subsection{Technical Approach}
+
+\subsubsection{Perception and Sensor Fusion}
+
+The robot integrates two complementary sensing modalities:
+
+\paragraph{LiDAR-based Occupancy Grid Mapping}
+
+The LiDAR continuously scans the environment and builds a probabilistic map using log-odds occupancy mapping. Each scan updates the map as follows:
+
+\begin{itemize}
+    \item \textbf{Intermediate cells} (from robot to obstacle): marked as free space with log-odds decreasing by 0.36
+    \item \textbf{Endpoint cell} (obstacle): marked as occupied with log-odds increasing by 0.85
+    \item \textbf{Log-odds clipping}: values bounded to $[-5, 5]$ to ensure numerical stability
+    \item \textbf{Probabilistic conversion}: $P(\text{occupied}) = \frac{1}{1 + e^{-\text{score}}}$
+\end{itemize}
+
+The probability threshold is set at 0.7, meaning cells with probability above 0.7 become obstacles, below 0.5 become free space, and intermediate values remain unknown. This soft probabilistic approach allows the robot to gradually incorporate sensor data and adapt to changing environments.
+
+\paragraph{Camera-based Color Detection}
+
+The RGB camera (320×240 resolution) operates in the HSV color space for robust detection under varying lighting. Three object classes are detected:
+
+\begin{itemize}
+    \item \textbf{Blue pillar (start):} HSV range H$\in[100,140]$, depth threshold 80 cm
+    \item \textbf{Yellow pillar (goal):} HSV range H$\in[20,35]$, depth threshold 80 cm  
+    \item \textbf{Red walls:} Two HSV ranges (H$\in[0,10] \cup [170,180]$) to handle red's wraparound, requires 40\% pixel saturation
+    \item \textbf{Green carpet:} HSV range H$\in[36,86]$, dilated by 10-pixel morphological kernel for safety margins
+\end{itemize}
+
+When a pillar is detected, the robot aligns perpendicular to its center before marking the position on the global map.
+
+\paragraph{Concurrent Threading}
+
+Both LiDAR and camera detection run in independent background threads with thread-safe communication:
+\begin{itemize}
+    \item Detection results are stored in thread-safe signal variables
+    \item Main control loop checks signals at each timestep
+    \item Mutex locks prevent race conditions during sensor access
+\end{itemize}
+
+This architecture ensures perception runs continuously without blocking motion control, achieving responsive obstacle detection.
+
+\subsubsection{Grid Map Representation}
+
+The environment is represented as a discrete occupancy grid: $300 \times 300$ cells covering a $10\text{ m} \times 10\text{ m}$ area, giving 3.33 cm per cell resolution.
+
+Each cell stores one of five distinct values:
+\begin{itemize}
+    \item \textbf{Free space (0):} Confirmed safe for traversal
+    \item \textbf{Obstacle (1):} Impassable region
+    \item \textbf{Unknown (255):} Unexplored territory
+    \item \textbf{Green carpet (190):} Special category for toxic regions
+    \item \textbf{Closure (200):} Regions marked by robot after encountering boundaries
+\end{itemize}
+
+Special values (green carpet and closure markers) are protected from sensor overwrites, maintaining consistency even when the LiDAR revisits previously marked regions.
+
+\subsubsection{Frontier-based Exploration}
+
+Frontier cells are the boundary between known free space and unknown regions. The algorithm performs the following steps:
+
+\begin{enumerate}
+    \item \textbf{Frontier detection:} Scan the grid for all free cells adjacent to unknown cells
+    \item \textbf{Clustering:} Use breadth-first search (BFS) to group connected frontier pixels into cohesive regions
+    \item \textbf{Prioritization:} Select target frontier based on:
+    \begin{itemize}
+        \item Proximity to detected pillars (top priority, within 10 pixels)
+        \item Size of frontier region (larger = higher priority)
+        \item Random selection among remaining frontiers
+    \end{itemize}
+    \item \textbf{Target selection:} Pick the frontier region's centroid as navigation target
+\end{enumerate}
+
+This systematic approach ensures the robot explores the environment efficiently rather than wandering randomly.
+
+\subsubsection{Path Planning via A*}
+
+The A* pathfinding algorithm computes collision-free paths through the occupancy grid. Two operational modes use inflation to balance safety and optimality:
+
+\paragraph{Exploration Phase}
+Uses escalating inflation levels $[4, 3, 2]$ pixels:
+\begin{itemize}
+    \item \textbf{Inflation level 4:} Conservative paths, 4-pixel safety margin around obstacles
+    \item \textbf{Inflation level 3:} Medium safety, 3-pixel margin (tried if level 4 fails)
+    \item \textbf{Inflation level 2:} Allows narrower passages (tried if level 3 fails)
+\end{itemize}
+
+This escalation enables the robot to discover paths through narrow passages if initially blocked by conservative safety margins.
+
+\paragraph{Final Execution Phase}
+Once both pillars are found, the same A* algorithm (with same inflation levels) plans from blue to yellow. Start and goal points are expanded as free regions within the inflated map to guarantee accessibility.
+
+The algorithm uses:
+\begin{itemize}
+    \item \textbf{Heuristic:} Euclidean distance to goal
+    \item \textbf{Movement:} 8-directional (cardinal + diagonal) with appropriate distance costs
+    \item \textbf{Tie-breaking:} Counter-based heap ordering for consistent results
+\end{itemize}
+
+\subsubsection{Local Motion Control via DWA}
+
+The Dynamic Window Approach generates velocity commands to follow planned waypoints while avoiding obstacles detected in real-time.
+
+\paragraph{DWA Parameters}
+\begin{itemize}
+    \item \textbf{Velocity samples:} $[0.1, 0.15, 0.2, 0.25, 0.4, 0.45]$ m/s
+    \item \textbf{Angular velocity samples:} $[-4.5, -3.5, -3, -2.5, -2, 0, 2, 2.5, 3, 3.5, 4.5]$ rad/s
+    \item \textbf{Prediction horizon:} 100 ms ahead
+\end{itemize}
+
+\paragraph{Scoring Function}
+
+Each velocity command $(v, \omega)$ is scored based on three criteria:
+
+$$\text{score} = 4.0 \cdot h + 3.5 \cdot d + 0.05 \cdot v$$
+
+\noindent where:
+\begin{itemize}
+    \item $h \in [0, 1]$: heading alignment toward target (1 = perfect alignment)
+    \item $d \in [0, 1]$: normalized distance to target (1 = closest)
+    \item $v \in [0, 1]$: normalized forward velocity (1 = maximum)
+\end{itemize}
+
+The high weights on heading (4.0) and distance (3.5) prioritize reaching the target, while speed weight (0.05) is minimal to prevent unsafe acceleration.
+
+\paragraph{Collision Avoidance}
+
+Commands are rejected if predicted motion would increase distance to target by more than 0.2 m, preventing forward-moving collisions. The best-scoring valid command is selected and executed.
+
+\subsubsection{Obstacle Recovery and Replanning}
+
+The robot handles obstacles adaptively:
+
+\paragraph{Minor Obstacles}
+When proximity sensors detect an obstacle:
+\begin{itemize}
+    \item Stop motion immediately
+    \item Reverse the robot ($-8$ m/s for 0.18 m)
+    \item Trigger global path replanning from current position to current target
+\end{itemize}
+
+\paragraph{Red Closure Walls}
+Upon detecting a red wall:
+\begin{itemize}
+    \item Align perpendicular to the wall using PID control ($K_p = 0.008$, $K_d = 0.002$)
+    \item Mark a $0.8\text{ m} \times 0.8\text{ m}$ closure region on the map
+    \item Resume exploration (during exploration phase) or replan (during final execution)
+\end{itemize}
+
+\paragraph{Stuck Detection}
+A background thread monitors robot position at 100 ms intervals:
+\begin{itemize}
+    \item If position change $< 0.005$ m for 50 consecutive timesteps
+    \item Robot is classified as stuck
+    \item Execute recovery: reverse motion, drop current frontier/path
+    \item Restart exploration or replanning
+\end{itemize}
+
+This three-tier recovery mechanism ensures the robot escapes most situations without requiring human intervention.
+
+\newpage
+
+\printbibliography
+\end{document}
