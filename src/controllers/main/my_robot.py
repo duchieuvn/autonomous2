@@ -1424,7 +1424,7 @@ class MyRobot(Supervisor):
     #                     return
     #     self.stop_motor()
 
-    def frontier_following(self, path, vis=None, replan_interval=30, drop_on_red_wall=True, use_global_planner=False):
+    def frontier_following(self, path, vis=None, replan_interval=20, drop_on_red_wall=True, use_global_planner=False):
 
         """
         Frontier following with:
@@ -1476,13 +1476,13 @@ class MyRobot(Supervisor):
                 # --------------------------------------------------
                 if self.obstacle_in_front():
                     replan_attempts += 1
-                    print(f"[Frontier] Obstacle detected! Attempt {replan_attempts}/3")
+                    print(f"[Frontier] Obstacle detected! Attempt {replan_attempts}/2")
                     
                     self.recover_from_obstacle() # Back up
                     self.lidar_update_map()      # Update map with the new obstacle
 
-                    if replan_attempts >= 3:
-                        print("[Frontier] Failed 3 times. Giving up on this frontier for now.")
+                    if replan_attempts >= 2:
+                        print("[Frontier] Failed 2 times. Giving up on this frontier for now.")
                         # NOTE: We do NOT mark it as visited here, so it stays in the pool
                         return False
 
@@ -2243,6 +2243,24 @@ class MyRobot(Supervisor):
             if self.step(self.time_step) == -1:
                 self.stop_motor()
                 return False
+
+        random_duration = random.randint(turn_duration[0], turn_duration[1])
+        # turn randomly left or right
+        if random.random() < 0.5:
+            self.turn_left_milisecond(random_duration)
+        else:
+            self.turn_right_milisecond(random_duration)
+        self.set_robot_velocity(5, 5)
+        self.step(250)
+
+        
+        
+        self.stop_motor()
+         # Wait for lidar thread / map update
+        for _ in range(40):
+            if self.step(self.time_step) == -1:
+                self.stop_motor()
+                return False
             
     def recover_from_obstacle(self, turn_duration=(400, 600)):
         speeds = random.choice([(-8, -8), (-8, -8)])
@@ -2252,10 +2270,10 @@ class MyRobot(Supervisor):
 
         distances = self.get_distances()
         if distances[2] > 0.25 and distances[3] > 0.25:
-            print("reversing longer")
+            print("reversing longer [recover from obstacle]")
             self.step(500)
         else:
-            print("reversing shorter")
+            print("reversing shorter [recover from obstacle]")
             self.step(250)
 
         
