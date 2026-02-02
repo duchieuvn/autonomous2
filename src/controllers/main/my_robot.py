@@ -250,7 +250,7 @@ class MyRobot(Supervisor):
                         # self.stop_motor()
                         # self.step(self.time_step)
                         self.lidar_update_map()
-                time.sleep(0.2)  # Update at same frequency as before
+                time.sleep(0.1)  # Update at same frequency as before
 
             except Exception as e:
                 print(f"[Lidar] Error in lidar update loop: {e}")
