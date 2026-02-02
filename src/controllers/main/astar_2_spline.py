@@ -51,7 +51,7 @@ def runAStarSearch(global_map, start_coords, goal_coords):
         if abs(cx - goal_x) <= 2 and abs(cy - goal_y) <= 2:
             path = _reconstruct_path(parent_map, cy, cx)
             # Call your existing smoothing function
-            return smoothPath(path, method='bspline', smoothness=0.0)
+            return smoothPath(path, method='bspline', smoothness=0.1)
 
         # Skip if we found a better path already
         if f > g_costs[cy, cx] + np.sqrt((cx - goal_x)**2 + (cy - goal_y)**2) * 1.2:
@@ -94,10 +94,10 @@ def smoothPath(path, method='bspline', smoothness=0.3):
         return _naturalSplineSmooth(path, smoothness)
     elif method == 'parametric_spline':
         return _parametricSplineSmooth(path, smoothness)
-    elif method == 'corner_aware':
-        return _cornerAwareSmooth(path, smoothness)
-    elif method == 'bezier_like':
-        return _bezierLikeSmooth(path, smoothness)
+    # elif method == 'corner_aware':
+    #     return _cornerAwareSmooth(path, smoothness)
+    # elif method == 'bezier_like':
+    #     return _bezierLikeSmooth(path, smoothness)
     return _bsplineSmooth(path, smoothness)
 
 def _naturalSplineSmooth(path, smoothness):
