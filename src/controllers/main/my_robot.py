@@ -874,13 +874,15 @@ class MyRobot(Supervisor):
         
         # Calculate horizontal distance using Pythagorean theorem
         max_depth_cm = float(np.max(valid_depths))
+        column_height_cm = 125.0
         if not self.is_column_fully_in_frame(hsv_img, color):
             print(f"Max depth: {max_depth_cm}")
-            if max_depth_cm < 110.0:
-                max_depth_cm = max_depth_cm * 1.25
+            if max_depth_cm < 115.0:
+                column_height_cm = 90.0
+                # max_depth_cm = max_depth_cm * 1.25
             else:
+                column_height_cm = 105.0
                 max_depth_cm = max_depth_cm * 1.1
-        column_height_cm = 125.0
         
         if max_depth_cm <= column_height_cm:
             return np.mean(valid_depths)  # Fallback to average depth if max is too small
@@ -1020,7 +1022,7 @@ class MyRobot(Supervisor):
             frontier_regions = self.map_object.detect_frontiers()
 
             # Occasionally bias frontier choice near known column estimates/start/end
-            if random.random() < 0.9:
+            if random.random() < 0.85:
                 chosen_frontier = self.select_random_frontier_near_column()
                 chasing_column = (chosen_frontier is not None)
                 print("----Frontire near column---")
@@ -1047,7 +1049,7 @@ class MyRobot(Supervisor):
         return frontier_regions, chosen_frontier, path_to_frontier
     
     def mark_column(self, color):
-        wp = self.position_ahead(0.2)  # 0.2 meters ahead
+        wp = self.position_ahead(0.4)  # 0.4 meters ahead
         mp = self.convert_to_map_coordinates(wp[0], wp[1])
 
         if color == 'blue':
