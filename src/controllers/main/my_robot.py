@@ -32,6 +32,7 @@ class MyRobot(Supervisor):
         self.blue_pos_update_count = 0  # Track how many times blue column has been updated
         self.yellow_pos_update_count = 0  # Track how many times yellow column has been updated
         self.path = []
+        self.interrupt_path = False
         self.chosen_frontier_count = 0
         # closure marking cooldown to avoid repeated marks when seeing same wall
         self.last_closure_time = 0.0
@@ -223,6 +224,7 @@ class MyRobot(Supervisor):
                             self.center_column_in_view(color)
                             print(f"Column {color} is close", column_distance)
                             self.mark_column(color)
+                            self.interrupt_path = True
                             self.turn_right_milisecond(600)
                         
 
@@ -329,7 +331,7 @@ class MyRobot(Supervisor):
     def is_turning(self):
         left_speed = self.motors['fl'].getVelocity()
         right_speed = self.motors['fr'].getVelocity()
-        turning = abs(left_speed - right_speed) > 0.10
+        turning = abs(left_speed - right_speed) > 0.02
         return turning
 
 
@@ -983,8 +985,8 @@ class MyRobot(Supervisor):
     #     self.stop_motor()
 
     def slowly_360(self):
-        
-        self.set_robot_velocity(-3, 3)
+        print("[Scan] Starting 360 rotation...")
+        self.set_robot_velocity(3, -3)
         steps_taken = 0
         target_steps = 8500 // self.time_step
         
@@ -993,14 +995,20 @@ class MyRobot(Supervisor):
                 break
             steps_taken += 1
             
-            # Check for detection signals
+            # Check the thread signal
             with self.detection_lock:
                 if self.camera_detection_signal is not None:
-                    print("----Stopping 360 for detection---")
-                    break
+                    # If we see a column, STOP immediately
+                    if isinstance(self.camera_detection_signal, tuple) and self.camera_detection_signal[0] == 'column':
+                        print(f"---- Column {self.camera_detection_signal[1]} detected! Stopping 360 ---")
+                        break
+                    # Also stop for other important detections
+                    elif self.camera_detection_signal in ['red_wall', 'green_carpet']:
+                        print(f"---- {self.camera_detection_signal} detected! Stopping 360 ---")
+                        break
         
         self.stop_motor()
-        
+            
 
     def handle_frontier_exploration(self, count, map_diff):
         frontier_regions = []
@@ -1140,6 +1148,9 @@ class MyRobot(Supervisor):
         map_diff = 1.0
         frontier_regions = []
         last_position = self.get_position()
+
+        #  only for the first time delay 1 sec
+        time.sleep(0.2)
 
         self.slowly_360()
 
@@ -1460,6 +1471,11 @@ class MyRobot(Supervisor):
 
             while self.step(self.time_step) != -1:
                 timestep_counter += 1
+                if self.interrupt_path:
+                    print("[Frontier] Path interrupted by column marking!")
+                    self.stop_motor()
+                    self.interrupt_path = False  # Reset the flag
+                    return True  # Return True because we found what we wanted
                 last_position = self.get_position()
                 self.counter_obstacle_recoveries = 0
 
@@ -1906,6 +1922,10 @@ class MyRobot(Supervisor):
                                 else:
                                     if center_ratio >= 0.20:
                                         self.mark_column(color)
+                                print(f"[FinalPath] Column {color} marked. Breaking path to re-evaluate.")
+                                self.stop_motor()
+
+                                continue
                             except Exception as e:
                                 print(f"[Column] mark failed (final): {e}")
 
