@@ -20,8 +20,8 @@ def runAStarSearch(global_map, start_coords, goal_coords):
     dist_to_obs = distance_transform_edt(global_map == 0)
     
     # Tunable parameters for "pushing" away from walls
-    SAFE_DISTANCE = 15.0  # pixels
-    PENALTY_STRENGTH = 10.0
+    SAFE_DISTANCE = 5.0  # pixels
+    PENALTY_STRENGTH = 2.0
     penalty_map = np.where(dist_to_obs < SAFE_DISTANCE, 
                            PENALTY_STRENGTH * (1.0 - dist_to_obs / SAFE_DISTANCE), 
                            0.0).astype(np.float32)
