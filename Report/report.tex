@@ -1,0 +1,509 @@
+\documentclass{article}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage[tc]{titlepic}
+\usepackage{caption}
+\usepackage{booktabs}
+\usepackage{float}
+\usepackage{amsmath}
+\usepackage[
+  backend=biber,
+  style=ieee,
+  sorting=none
+    ]{biblatex}
+\usepackage[
+  a4paper,
+  left=2.5cm,
+  right=2.5cm,
+  top=2.5cm,
+  bottom=2.5cm
+]{geometry}
+\usepackage{indentfirst}
+
+\addbibresource{./assets/literature.bib}
+\begin{document}
+
+% Title and author
+\begin{titlepage}
+  \begin{center}
+    \vspace*{2cm}
+    \includegraphics[width = 10cm]{assets/oth.png}
+    \begin{center}
+      {Ostbayerische Technische Hochschule Amberg-Weiden}\\
+      {Department of Electrical Engineering, Media and Computer Science}
+    \end{center}
+
+    \vspace{2cm}
+    
+    {\fontsize{24}{36}\selectfont 
+        \bfseries 
+        AUTONOMOUS ROBOT \\[0.5cm]
+        {\normalsize Autonomous robot in Webots simulation}
+    }
+
+    \vspace{3cm}
+
+    {\large \textbf{Students}}
+
+    \vspace{0.5cm}
+
+    {\large Tran Thai Duc Hieu}
+
+    \vspace{0.25cm}
+
+    {\large Ammar Haider}
+
+    \vspace{0.25cm}
+
+    {\large Arman Pathan}
+
+    \vspace{2.5cm}
+
+    {\large \textbf{Supervised by}}
+
+    \vspace{0.5cm}
+
+    {\large Prof. Dr. Thomas Nierhoff}
+
+    \vspace{3cm}
+
+    
+    \vfill
+
+    {\large \today}
+  \end{center}
+\end{titlepage}
+
+
+\newpage
+
+\section{Approach}
+
+\subsection{Overview}
+
+This project implements an autonomous navigation system for a mobile robot in a simulated Webots environment. The robot's task is to navigate from a blue pillar (starting point) to a yellow pillar (goal) while avoiding obstacles, particularly green carpet(Poison) regions. The system operates in two phases: an exploration phase where the robot maps the environment and locates both pillars, followed by a final execution phase where it traverses the optimal path from start to goal.
+
+The core strategy combines frontier-based exploration for systematic environment coverage with reactive obstacle avoidance, enabling the robot to handle both pre-mapped obstacles and dynamic environmental features detected during navigation.
+
+\subsection{Strategy overview}
+
+The autonomous navigation strategy is built on three core principles:
+
+\subsubsection*{1. Continuous perception}
+Vision-based detection runs continuously in background threads, identifying three critical features in real-time:
+\begin{itemize}
+    \item \textbf{Blue and yellow pillars:} Landmark detection using camera color segmentation and depth estimation
+    \item \textbf{Red walls:} Obstacle boundaries requiring closure marking
+    \item \textbf{Green carpet:} Toxic regions to be avoided at all costs
+\end{itemize}
+
+\subsubsection*{2. Frontier-based exploration}
+Rather than random exploration, the robot systematically explores by targeting frontier regions—the boundary between known free space and unknown territory. Frontier targets are prioritized by:
+\begin{enumerate}
+    \item Proximity to detected pillars (highest priority)
+    \item Size of unexplored regions (explore large unknown areas first)
+    \item Random selection (fallback strategy)
+\end{enumerate}
+
+\subsubsection*{3. Reactive path following}
+Global paths (computed via A*) are followed locally using Dynamic Window Approach (DWA), enabling responsive collision avoidance without replanning the entire path.
+
+\newpage
+
+\subsection{Technical approaches}
+
+\subsubsection{Perception and sensor fusion}
+
+The robot integrates two complementary sensing modalities:
+
+\paragraph{LiDAR-based occupancy grid mapping}
+
+The LiDAR continuously scans the environment and builds a probabilistic map using log-odds occupancy mapping. Each scan updates the map as follows:
+
+\begin{itemize}
+    \item \textbf{Intermediate cells} (from robot to obstacle): marked as free space with log-odds decreasing by a tuned negative weight
+    \item \textbf{Endpoint cell} (obstacle): marked as occupied with log-odds increasing by a tuned positive weight
+    \item \textbf{Log-odds clipping}: values bounded to prevent numerical overflow
+    \item \textbf{Probabilistic conversion}: $P(\text{occupied}) = \frac{1}{1 + e^{-\text{score}}}$
+\end{itemize}
+
+Configurable probability thresholds classify cells: high probability values indicate obstacles, low values indicate free space, and intermediate values remain unknown. This soft probabilistic approach allows the robot to gradually incorporate sensor data and adapt to changing environments.
+
+\paragraph{Concurrent threading}
+
+Both LiDAR and camera detection run in independent background threads with thread-safe communication:
+\begin{itemize}
+    \item Detection results are stored in thread-safe signal variables
+    \item Main control loop checks signals at each timestep
+    \item Mutex locks prevent race conditions during sensor access
+\end{itemize}
+
+This architecture ensures perception runs continuously without blocking motion control, achieving responsive obstacle detection.
+
+\subsubsection{Coordinate transformation matrix}
+
+The system uses a 2D rotation and translation matrix to convert points from the robot's local reference frame to the global world coordinate system. This transformation is essential for mapping LiDAR observations and projecting camera detections onto the occupancy grid.
+
+\paragraph{Transformation formula}
+
+Given a point $\mathbf{p}_{\text{local}} = [x_{\text{local}}, y_{\text{local}}]^T$ in the robot's coordinate frame, the corresponding world coordinates $\mathbf{p}_{\text{world}} = [x_{\text{world}}, y_{\text{world}}]^T$ are computed as:
+
+$$
+\mathbf{p}_{\text{world}} = \mathbf{R}(\theta) \cdot \mathbf{p}_{\text{local}} + \mathbf{t}
+$$
+
+\noindent where:
+
+$$
+\mathbf{R}(\theta) = \begin{bmatrix}
+\cos(\theta) & -\sin(\theta) \\
+\sin(\theta) & \cos(\theta)
+\end{bmatrix}
+$$
+
+\noindent and $\mathbf{t} = [x_{\text{robot}}, y_{\text{robot}}]^T$ is the robot's current position, and $\theta$ is the robot's heading (yaw angle) in radians.
+
+\paragraph{Implementation}
+
+For efficient batch processing of multiple points (e.g., LiDAR point clouds), NumPy vectorization is used:
+
+\begin{verbatim}
+points_rotated = points_local @ R.T  # Matrix multiplication
+points_world = points_rotated + [x_robot, y_robot]  # Broadcasting
+\end{verbatim}
+
+This transformation is applied to:
+\begin{itemize}
+    \item LiDAR point clouds for obstacle mapping
+    \item Green carpet pixel projections for hazard marking
+    \item Column position estimates for landmark localization
+\end{itemize}
+
+\subsubsection{LiDAR-based occupancy mapping}
+
+The robot builds a probabilistic occupancy grid map using log-odds representation combined with Bresenham's line algorithm for ray tracing.
+
+\paragraph{Log-odds update rule}
+
+Each LiDAR measurement updates the occupancy probability of cells along the ray from the robot to the detected obstacle. The log-odds score $L(x,y)$ for cell $(x,y)$ is updated as:
+
+$$
+L(x,y) = 
+\begin{cases}
+L(x,y) - \alpha_{\text{free}} & \text{if cell is on ray (free space)} \\
+L(x,y) + \alpha_{\text{occ}} & \text{if cell is endpoint (obstacle)} \\
+L(x,y) & \text{otherwise (unchanged)}
+\end{cases}
+$$
+
+\noindent where $\alpha_{\text{free}}$ and $\alpha_{\text{occ}}$ are tunable update weights. The log-odds values are clipped to a bounded range to prevent numerical overflow and maintain computational stability.
+
+\paragraph{Probability conversion}
+
+The discrete occupancy state of each cell is determined by converting log-odds to probability using the sigmoid function:
+
+$$
+P(\text{occupied} \mid x,y) = \frac{1}{1 + e^{-L(x,y)}}
+$$
+
+\noindent Cells are classified as:
+\begin{itemize}
+    \item \textbf{Obstacle} if $P > P_{\text{thresh\_high}}$ (high confidence occupied)
+    \item \textbf{Free space} if $P < P_{\text{thresh\_low}}$ (high confidence empty)
+    \item \textbf{Unknown} otherwise (insufficient evidence)
+\end{itemize}
+
+\noindent where $P_{\text{thresh\_high}}$ and $P_{\text{thresh\_low}}$ are configurable probability thresholds.
+
+\paragraph{Ray tracing with Bresenham}
+
+For each LiDAR point, Bresenham's line algorithm efficiently identifies all grid cells intersected by the ray from robot position to obstacle endpoint. This ensures accurate free-space marking along sensor beams without expensive floating-point computation.
+
+\subsubsection{Green carpet detection and marking}
+
+The green area represents hazardous regions that must be avoided. The system detects, projects, and permanently marks these areas on the occupancy grid using camera-based vision and coordinate transformation.
+
+\paragraph{Pixel-to-ground projection}
+
+Detected green pixels are projected onto the ground plane (Z=0) using an inverse pinhole camera model combined with the robot's extrinsic parameters.
+
+\textbf{Step 1: Normalize pixel coordinates}
+
+For each pixel $(u, v)$ in the camera image:
+
+$$
+x_{\text{norm}} = \frac{u - c_x}{f_x}, \quad y_{\text{norm}} = \frac{v - c_y}{f_y}
+$$
+
+\noindent where $(c_x, c_y)$ is the principal point (image center) and $(f_x, f_y)$ are the focal lengths in pixels.
+
+\textbf{Step 2: Calculate forward distance}
+
+Assuming the camera is mounted at height $H$ above the ground and looking forward with pitch angle $\approx 0$:
+
+$$
+D = \frac{H}{y_{\text{norm}}}
+$$
+
+\noindent where $D$ is the forward distance from the camera to the ground point. Only pixels below the horizon ($y_{\text{norm}} > 0$) are valid.
+
+\textbf{Step 3: Compute local coordinates}
+
+The ground point's position in the camera's local frame (X-forward, Y-lateral):
+
+$$
+X_{\text{cam}} = D, \quad Y_{\text{cam}} = -D \cdot x_{\text{norm}}
+$$
+
+\textbf{Step 4: Offset to robot frame}
+
+Account for camera mounting offset relative to robot center:
+
+$$
+X_{\text{robot}} = X_{\text{cam}} + \Delta X, \quad Y_{\text{robot}} = Y_{\text{cam}} + \Delta Y
+$$
+
+\noindent where $(\Delta X, \Delta Y)$ represents the camera's physical offset from the robot's center.
+
+\textbf{Step 5: Transform to world coordinates}
+
+Apply the rotation and translation matrix (Section 3.2.4) to convert robot-local coordinates to global map coordinates.
+
+\subsubsection{Frontier-based exploration}
+
+Frontier cells are the boundary between known free space and unknown regions. The algorithm performs the following steps:
+
+\begin{enumerate}
+    \item \textbf{Frontier detection:} Scan the grid for all free cells adjacent to unknown cells
+    \item \textbf{Clustering:} Use breadth-first search (BFS) to group connected frontier pixels into cohesive regions
+    \item \textbf{Prioritization:} Select target frontier based on:
+    \begin{itemize}
+        \item Proximity to detected pillars (top priority, within 10 pixels)
+        \item Size of frontier region (larger = higher priority)
+        \item Random selection among remaining frontiers
+    \end{itemize}
+    \item \textbf{Target selection:} Pick the frontier region's centroid as navigation target
+\end{enumerate}
+
+This systematic approach ensures the robot explores the environment efficiently rather than wandering randomly.
+
+\subsubsection{A* global path planning}
+
+The A* pathfinding algorithm computes optimal collision-free paths through the occupancy grid from start to goal. The implementation uses adaptive obstacle inflation and path quality validation to ensure safe, traversable routes.
+
+\paragraph{Adaptive inflation strategy}
+
+To balance path safety with feasibility, the planner employs escalating inflation levels $[I_1, I_2, ..., I_n]$ pixels, attempting each in sequence until a valid path is found:
+
+\begin{enumerate}
+    \item \textbf{Highest inflation level:} Conservative safety margin, attempts first
+    \item \textbf{Medium inflation levels:} Moderate safety, tried if higher levels produce no path
+    \item \textbf{Lowest inflation level:} Minimal clearance, allows navigation through narrow corridors
+\end{enumerate}
+
+\noindent The specific inflation values are configurable parameters that can be tuned based on the robot's physical dimensions and environment characteristics.
+
+\paragraph{Map preprocessing}
+
+Before pathfinding, the occupancy grid undergoes several preprocessing steps:
+
+\begin{enumerate}
+    \item \textbf{Noise removal:} Isolated obstacle pixels are removed using connected component analysis
+    \item \textbf{Small component filtering:} Obstacle clusters smaller than a minimum size threshold are eliminated to ignore sensor noise
+    \item \textbf{Obstacle inflation:} Remaining obstacles are dilated by the current inflation level using morphological dilation with an elliptical kernel
+    \item \textbf{Protected cell restoration:} Special markers (green carpet regions, closure areas) are reapplied as hard obstacles after inflation to ensure they are never traversed
+
+\end{enumerate}
+
+\paragraph{A* search algorithm}
+
+The core A* implementation uses:
+
+\begin{itemize}
+    \item \textbf{Heuristic function:} Euclidean distance $h(n) = \sqrt{(x_n - x_{\text{goal}})^2 + (y_n - y_{\text{goal}})^2}$
+    \item \textbf{Cost function:} $g(n)$ accumulates actual distance traveled (1.0 for cardinal moves, $\sqrt{2} \approx 1.414$ for diagonal moves)
+    \item \textbf{Movement model:} 8-directional connectivity (N, S, E, W, NE, NW, SE, SW)
+    \item \textbf{Priority queue:} Min-heap ordered by $f(n) = g(n) + h(n)$ with tie-breaking counter for deterministic behavior
+\end{itemize}
+
+\paragraph{Path quality validation}
+
+Each candidate path is validated before acceptance:
+
+$$
+L_{\text{path}} = \sum_{i=1}^{N-1} \sqrt{(x_{i+1} - x_i)^2 + (y_{i+1} - y_i)^2} \cdot r
+$$
+
+\noindent where $r$ is the grid resolution in meters per pixel. Paths are rejected if $L_{\text{path}} < L_{\text{min}}$, where $L_{\text{min}}$ is a configurable minimum path length threshold. This forces the planner to retry with higher inflation and avoids unrealistic shortcuts through tight gaps.
+
+\paragraph{Path smoothing}
+
+Raw A* paths contain grid-aligned zigzag patterns. To produce smooth, drivable trajectories, the path is post-processed using B-spline interpolation:
+
+\begin{enumerate}
+    \item Detect sharp corners (angle changes above a threshold) as key waypoints
+    \item Apply natural cubic spline fitting to waypoint coordinates
+    \item Resample the spline at higher density for smoother motion
+\end{enumerate}
+
+This smoothing reduces abrupt direction changes and improves tracking performance for the local planner.
+
+\subsubsection{DWA local motion planning}
+
+The Dynamic Window Approach (DWA) generates velocity commands to follow planned waypoints while reactively avoiding obstacles detected in real-time. DWA operates as a local planner that bridges the gap between global A* paths and low-level motor control.
+
+\paragraph{Dynamic window concept}
+
+DWA samples velocity pairs $(v, \omega)$ from a discrete set of admissible velocities and simulates their short-term trajectories. The "dynamic window" refers to the subset of velocities reachable given the robot's current motion constraints (acceleration limits, maximum speeds).
+
+In this implementation, the window is simplified to predefined velocity samples:
+\begin{itemize}
+    \item \textbf{Linear velocities:} A discrete set of forward velocity samples from low to maximum speed
+    \item \textbf{Angular velocities:} A discrete set of angular velocity samples including zero, positive (left turn), and negative (right turn) values
+\end{itemize}
+
+The number of candidate velocity pairs is determined by the product of linear and angular sample counts, all evaluated at each planning cycle.
+
+\paragraph{Trajectory simulation and collision checking}
+
+For each $(v, \omega)$ pair, the robot's future pose is predicted over a short time horizon using the differential drive kinematic model:
+
+$$
+\begin{aligned}
+x_{t+\Delta t} &= x_t + v \cos(\theta_t) \cdot \Delta t \\
+y_{t+\Delta t} &= y_t + v \sin(\theta_t) \cdot \Delta t \\
+\theta_{t+\Delta t} &= \theta_t + \omega \cdot \Delta t
+\end{aligned}
+$$
+
+\noindent where $\Delta t$ is the simulation timestep.
+
+The trajectory is simulated over a configurable prediction horizon (multiple timesteps), checking for collisions at each predicted position by querying the occupancy grid. Trajectories are rejected if:
+\begin{itemize}
+    \item Any predicted cell contains an obstacle (probability above threshold)
+    \item The predicted distance to target increases by more than a configurable tolerance (prevents moving away from goal)
+\end{itemize}
+
+\paragraph{Multi-objective scoring function}
+
+Valid trajectories are scored using a weighted combination of three objectives:
+
+$$
+\text{score}(v, \omega) = w_h \cdot S_{\text{heading}} + w_d \cdot S_{\text{distance}} + w_v \cdot S_{\text{velocity}}
+$$
+
+\noindent where $w_h$, $w_d$, and $w_v$ are configurable weights for heading alignment, distance to target, and forward velocity respectively. The weights are tuned such that heading and distance objectives dominate over speed, prioritizing accurate navigation over velocity.
+
+\textbf{Heading Score:} Measures alignment with the direction to the target waypoint:
+
+$$
+S_{\text{heading}} = \cos(\theta_{\text{error}})
+$$
+
+\noindent where $\theta_{\text{error}} = \theta_{\text{target}} - \theta_{\text{predicted}}$ is the angular difference between the predicted heading and the direction pointing toward the waypoint. This score ranges from 1 (perfect alignment) to -1 (opposite direction).
+
+\textbf{Distance Score:} Rewards getting closer to the target:
+
+$$
+S_{\text{distance}} = 1 - \frac{d_{\text{predicted}}}{d_{\text{norm}}}
+$$
+
+\noindent where $d_{\text{predicted}}$ is the Euclidean distance from the predicted pose to the target waypoint, and $d_{\text{norm}}$ is a normalization factor based on typical waypoint distances.
+
+\textbf{Velocity Score:} Encourages higher speeds when safe:
+
+$$
+S_{\text{velocity}} = \frac{v}{v_{\text{max}}}
+$$
+
+\noindent where $v_{\text{max}}$ is the maximum linear velocity defined by the robot's capabilities and safety constraints.
+
+\paragraph{Control output}
+
+The velocity pair $(v^*, \omega^*)$ with the highest score is selected and converted to differential wheel speeds:
+
+$$
+\omega_L = \frac{v^* - \frac{L}{2} \omega^*}{r}, \quad \omega_R = \frac{v^* + \frac{L}{2} \omega^*}{r}
+$$
+
+\noindent where $L$ is the axle length (wheelbase) and $r$ is the wheel radius, both determined by the robot's physical design.
+
+\newpage
+
+\section{Results}
+
+
+Table \ref{tab:navigation_times} shows the navigation completion times across all five maze configurations. Times are measured from the start of the exploration phase until the robot reaches the yellow pillar.
+
+\begin{table}[H]
+\centering
+\caption{Navigation Times for Each Maze Configuration}
+\label{tab:navigation_times}
+\begin{tabular}{c|c|c|c|c}
+\toprule
+\textbf{Map} & \textbf{Start $\rightarrow$ Yellow} & \textbf{Start $\rightarrow$ Blue} & \textbf{Blue $\rightarrow$ Yellow} & \textbf{Total} \\
+\midrule
+1 & 00:00 $\rightarrow$ 00:33 & 00:00 $\rightarrow$ 01:19 & 01:19 $\rightarrow$ 01:44  & 01:44 \\
+\midrule
+2 & 00:00 $\rightarrow$ 00:05 & 00:00 $\rightarrow$ 01:53 & 01:53 $\rightarrow$ 02:39 & 02:39 \\
+\midrule
+3 & 00:00 $\rightarrow$ 01:02 & 00:00 $\rightarrow$ 01:29 & 01:29 $\rightarrow$ 01:46 & 01:46 \\
+\midrule
+4 & 00:00 $\rightarrow$ 00:05 & 00:00 $\rightarrow$ 00:53 & 00:53 $\rightarrow$ 01:26 & 01:26 \\
+\midrule
+5 & 00:00 $\rightarrow$ 00:09 & 00:00 $\rightarrow$ 01:12 & 01:12 $\rightarrow$ 01:30 & 01:30 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\newpage
+
+\section{Declaration of AI Usage}
+
+In accordance with academic integrity guidelines, we hereby declare the use of AI-assisted tools during the development of this project.
+
+\subsection{Tools Used}
+
+\begin{itemize}
+    \item \textbf{GitHub Copilot} (integrated in Visual Studio Code)
+    \item \textbf{ChatGPT} (OpenAI)
+\end{itemize}
+
+\subsection{Purpose and Scope of Use}
+
+AI tools were used in the following capacities:
+
+\begin{enumerate}
+    \item \textbf{Code assistance:} Autocompletion, syntax suggestions, and debugging support during the implementation of the robot controller, pathfinding algorithms, and sensor processing modules.
+    \item \textbf{Report writing:} Assistance with structuring, phrasing, and formatting sections of this report, including mathematical notation in \LaTeX.
+    \item \textbf{Problem solving:} Consultation for algorithmic design decisions such as log-odds mapping, DWA parameter tuning, and coordinate transformation formulations.
+\end{enumerate}
+
+\subsection{Declaration}
+
+All AI-generated suggestions were reviewed, understood, and adapted by the authors. The overall system design, architecture decisions, parameter tuning, testing, and final implementation are the original work of the project team. AI tools served as assistive aids and did not autonomously produce any final deliverable.
+
+\vspace{1cm}
+
+\noindent\textbf{Signed by all team members:}
+
+\vspace{0.8cm}
+
+\noindent\rule{6cm}{0.4pt} \\
+Tran Thai Duc Hieu
+
+\vspace{0.8cm}
+
+\noindent\rule{6cm}{0.4pt} \\
+Ammar Haider
+
+\vspace{0.8cm}
+
+\noindent\rule{6cm}{0.4pt} \\
+Arman Pathan
+
+\vspace{0.5cm}
+
+\noindent Amberg, \today
+
+\end{document}
