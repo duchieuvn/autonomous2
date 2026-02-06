@@ -102,6 +102,8 @@ YELLOW_HSV_LOWER = [20, 100, 100]     # [USED] Yellow color lower bound (HSV)
 YELLOW_HSV_UPPER = [35, 255, 255]     # [USED] Yellow color upper bound (HSV)
 GREEN_HSV_LOWER = [36, 100, 100]      # [USED] Green color lower bound (HSV)
 GREEN_HSV_UPPER = [86, 255, 255]      # [USED] Green color upper bound (HSV)
+GREEN_CARPET_DILATION_KERNEL_SIZE = 10     # Kernel size for expanding green pixels
+GREEN_CARPET_DILATION_ITERATIONS = 1      # Number of dilation iterations
 
 # --- TURNING & TURNING COOLDOWN ---
 TURN_ROTATION_COOLDOWN_STEPS = 10           # [UNUSED] Steps cooldown after turning stops (used as hardcoded 10 in is_turning method)
@@ -123,9 +125,9 @@ MAPPING_PROBABILITY_OBSTACLE = 0.7          # [UNUSED] Probability threshold for
 MAPPING_PROBABILITY_FREE = 0.5              # [UNUSED] Probability threshold for free space (hardcoded 0.5 in update_grid_map)
 
 # --- A* PATHFINDING ---
-ASTAR_INFLATION_LEVELS = [5, 4, 3]   # [USED] Inflation levels for escalating A*
+ASTAR_INFLATION_LEVELS = [4, 3, 2]   # [USED] Inflation levels for escalating A*
 ASTAR_EXPANSION_PIXELS = 3                 # [USED] Expansion around start/end points
-ASTAR_FRONTIER_INFLATION = 5          # [UNUSED] Inflation level for frontier pathfinding (hardcoded 13 in find_path_for_frontier)
+ASTAR_FRONTIER_INFLATION = 4          # [UNUSED] Inflation level for frontier pathfinding (hardcoded 13 in find_path_for_frontier)
 
 # ============================================================================
 # END HYPERPARAMETERS
