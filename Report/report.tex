@@ -506,4 +506,37 @@ Arman Pathan
 
 \noindent Amberg, \today
 
+\newpage
+\appendix
+
+\section{Supplementary Figures}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{assets/green_carpet_marking.png}
+    \caption{Occupancy grid visualization showing green carpet (poison) detection and permanent marking. The green marker indicates a detected hazardous region projected from the camera onto the map. The blue dot represents the robot's current position, the yellow dot marks the goal pillar, and the red line shows the planned path. The large black region in the center is a detected wall obstacle.}
+    \label{fig:green_carpet_marking}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    % \includegraphics[width=0.8\textwidth]{assets/inflated_map_4px.png}
+    \caption{Inflated occupancy grid map with 4-pixel obstacle inflation used for A* path planning. White regions represent free space, black regions represent inflated obstacles, and purple regions indicate closure markings.}
+    \label{fig:inflated_map}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    % \includegraphics[width=0.8\textwidth]{assets/frontier_map.png}
+    \caption{Frontier detection visualization. Colored regions indicate frontier clusters of varying sizes: blue (small), cyan (medium), yellow (large), and red (largest). The robot prioritizes frontier targets based on proximity to detected pillars and region size.}
+    \label{fig:frontier_map}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    % \includegraphics[width=0.8\textwidth]{assets/final_path.png}
+    \caption{Final planned path (red line) from blue pillar (start) to yellow pillar (goal) overlaid on the completed occupancy grid. The path is smoothed using B-spline interpolation after A* search.}
+    \label{fig:final_path}
+\end{figure}
+
 \end{document}
