@@ -3,9 +3,7 @@ from CONSTANTS import *
 import numpy as np
 import cv2
 from collections import deque
-from astar_clearance import runAStarSearch  # NEW: Clearance-aware A* with tunable hyperparameters
 from astar_2_spline import runAStarSearch as runAStarSearchSpline
-from astar_standard import runAStarSearch as runAStarSearch2Spline
 import random
 import pygame
 import threading 
