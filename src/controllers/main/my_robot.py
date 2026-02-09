@@ -32,6 +32,7 @@ class MyRobot(Supervisor):
         self.blue_pos_update_count = 0  # Track how many times blue column has been updated
         self.yellow_pos_update_count = 0  # Track how many times yellow column has been updated
         self.path = []
+        self.interrupt_path = False
         self.chosen_frontier_count = 0
         # closure marking cooldown to avoid repeated marks when seeing same wall
         self.last_closure_time = 0.0
@@ -106,6 +107,8 @@ class MyRobot(Supervisor):
         self.yellow_prev_estimate_position = None  # Previous position when yellow was estimated
         self.estimation_distance_threshold = 0.5  # meters - minimum distance to perform another estimation
 
+        # counters
+        self.counter_obstacle_recoveries = 0
 
     def start_camera_thread(self):
         """Start the continuous detection thread for red walls and columns."""
@@ -221,6 +224,7 @@ class MyRobot(Supervisor):
                             self.center_column_in_view(color)
                             print(f"Column {color} is close", column_distance)
                             self.mark_column(color)
+                            self.interrupt_path = True
                             self.turn_right_milisecond(600)
                         
 
@@ -327,7 +331,7 @@ class MyRobot(Supervisor):
     def is_turning(self):
         left_speed = self.motors['fl'].getVelocity()
         right_speed = self.motors['fr'].getVelocity()
-        turning = abs(left_speed - right_speed) > 0.20
+        turning = abs(left_speed - right_speed) > 0.02
         return turning
 
 
@@ -414,11 +418,29 @@ class MyRobot(Supervisor):
         y = (self.map_object.map_size // 2 - map_y) * RESOLUTION
         return float(x), float(y)
     
+    # def obstacle_in_front(self):
+    #     distances = self.get_distances()
+    #     if min(distances[0], distances[2]) < 0.3:
+    #         return True
+    #     return False
+    # Line 424 in your file
     def obstacle_in_front(self):
-        distances = self.get_distances()
-        if min(distances[0], distances[2]) < 0.3:
-            return True
-        return False
+        # 1. Check original distance sensors (V-shape)
+        ds_distances = self.get_distances()
+        ds_obstacle = min(ds_distances[0], ds_distances[2]) < 0.05
+        if ds_obstacle:
+            print(f"[Virtual Bumper] Distance sensors detected obstacle at {min(ds_distances[0], ds_distances[2]):.2f}m")
+        
+        # 2. Check Lidar Virtual Bumper (The "Semicircle")
+        lidar_dist = self.get_lidar_front_min_dist(angle_range_deg=35)
+        lidar_obstacle = lidar_dist < 0.10  # Slightly larger threshold for safety
+        if lidar_obstacle:
+            print(f"[Virtual Bumper] Lidar detected obstacle at {lidar_dist:.2f}m")
+        
+        # Return True if either detects an obstacle
+        return ds_obstacle or lidar_obstacle
+
+
 
     def turn_right_milisecond(self, s=200):  
         self.set_robot_velocity(8, -8)
@@ -573,6 +595,31 @@ class MyRobot(Supervisor):
         self.set_robot_velocity(left_speed, right_speed)
         return False, False
     
+    def get_lidar_front_min_dist(self, angle_range_deg=30):
+        """Returns the minimum distance to an obstacle in a front-facing arc."""
+        if self.lidar is None:
+            return float('inf')
+        
+        # Get local 2D points (x is forward, y is left)
+        points_local = self.get_pointcloud_2d()
+        if len(points_local) == 0:
+            return float('inf')
+        
+        # Calculate angles for all points
+        # atan2(y, x) gives angle from x-axis (forward)
+        angles = np.arctan2(points_local[:, 1], points_local[:, 0])
+        distances = np.linalg.norm(points_local, axis=1)
+        
+        # Filter for points within the front arc (e.g., -30 to +30 degrees)
+        limit = np.radians(angle_range_deg)
+        front_mask = (angles > -limit) & (angles < limit)
+        
+        front_distances = distances[front_mask]
+        if len(front_distances) == 0:
+            return float('inf')
+        
+        return np.min(front_distances)
+
     def get_min_front_distance(self, angle_deg=None):
         if angle_deg is None:
             angle_deg = LIDAR_FRONT_CONE_ANGLE
@@ -938,8 +985,8 @@ class MyRobot(Supervisor):
     #     self.stop_motor()
 
     def slowly_360(self):
-        
-        self.set_robot_velocity(-3, 3)
+        print("[Scan] Starting 360 rotation...")
+        self.set_robot_velocity(3, -3)
         steps_taken = 0
         target_steps = 8500 // self.time_step
         
@@ -948,14 +995,20 @@ class MyRobot(Supervisor):
                 break
             steps_taken += 1
             
-            # Check for detection signals
+            # Check the thread signal
             with self.detection_lock:
                 if self.camera_detection_signal is not None:
-                    print("----Stopping 360 for detection---")
-                    break
+                    # If we see a column, STOP immediately
+                    if isinstance(self.camera_detection_signal, tuple) and self.camera_detection_signal[0] == 'column':
+                        print(f"---- Column {self.camera_detection_signal[1]} detected! Stopping 360 ---")
+                        break
+                    # Also stop for other important detections
+                    elif self.camera_detection_signal in ['red_wall', 'green_carpet']:
+                        print(f"---- {self.camera_detection_signal} detected! Stopping 360 ---")
+                        break
         
         self.stop_motor()
-        
+            
 
     def handle_frontier_exploration(self, count, map_diff):
         frontier_regions = []
@@ -1095,6 +1148,9 @@ class MyRobot(Supervisor):
         map_diff = 1.0
         frontier_regions = []
         last_position = self.get_position()
+
+        #  only for the first time delay 1 sec
+        time.sleep(0.2)
 
         self.slowly_360()
 
@@ -1379,7 +1435,7 @@ class MyRobot(Supervisor):
     #                     return
     #     self.stop_motor()
 
-    def frontier_following(self, path, vis=None, replan_interval=30, drop_on_red_wall=True, use_global_planner=False):
+    def frontier_following(self, path, vis=None, replan_interval=20, drop_on_red_wall=True, use_global_planner=False):
 
         """
         Frontier following with:
@@ -1398,6 +1454,8 @@ class MyRobot(Supervisor):
         timestep_counter = 0
         stuck_counter = 0
         stuck_attempt_count = 0     # Track total stuck events (not replan failures)
+        #
+        replan_attempts = 0  # Track how many times we've replanned due to obstacles
 
         target_index = 5
         OBSTACLE_THRESHOLD = 0.08   # meters
@@ -1413,7 +1471,13 @@ class MyRobot(Supervisor):
 
             while self.step(self.time_step) != -1:
                 timestep_counter += 1
+                if self.interrupt_path:
+                    print("[Frontier] Path interrupted by column marking!")
+                    self.stop_motor()
+                    self.interrupt_path = False  # Reset the flag
+                    return True  # Return True because we found what we wanted
                 last_position = self.get_position()
+                self.counter_obstacle_recoveries = 0
 
                 # --------------------------------------------------
                 # 1) ACTIVE: Handle camera signals here (selective)
@@ -1423,6 +1487,37 @@ class MyRobot(Supervisor):
                     if self.camera_detection_signal is not None:
                         signal = self.camera_detection_signal
                         self.camera_detection_signal = None
+
+                # 3) FRONT OBSTACLE → REVERSE → REPLAN (Max 3 tries)
+                # --------------------------------------------------
+                if self.obstacle_in_front():
+                    replan_attempts += 1
+                    print(f"[Frontier] Obstacle detected! Attempt {replan_attempts}/2")
+                    
+                    self.recover_from_obstacle() # Back up
+                    self.lidar_update_map()      # Update map with the new obstacle
+
+                    if replan_attempts >= 2:
+                        print("[Frontier] Failed 2 times. Giving up on this frontier for now.")
+                        # NOTE: We do NOT mark it as visited here, so it stays in the pool
+                        return False
+
+                    # Try to replan to the same goal
+                    try:
+                        current_start = self.get_map_position()
+                        new_path = self.map_object.find_path_for_frontier(current_start, frontier_goal)
+                        if new_path and len(new_path) > 5:
+                            print("[Frontier] Replanned successfully! Trying new route...")
+                            current_path = new_path
+                            target_index = 5
+                            break # Exit inner loop to start following the new path
+                        else:
+                            print("[Frontier] No path found after obstacle. Dropping.")
+                            return False
+                    except Exception as e:
+                        print(f"[Frontier] Replan error: {e}")
+                        return False
+
 
                 # 🔴 Red wall: INTERRUPT path following (same as explore)
                 if signal == 'red_wall':
@@ -1471,7 +1566,7 @@ class MyRobot(Supervisor):
                     self.stop_motor()
                     # time.sleep(0.5)
                     
-                    marked = self.mark_green_carpet_permanently(min_pixel_threshold=10)
+                    marked = self.mark_green_carpet_permanently(min_pixel_threshold=10000)
                     if marked:
                         self.stop_motor()
                         time.sleep(0.5)
@@ -1505,24 +1600,12 @@ class MyRobot(Supervisor):
 
                 # 3) FRONT OBSTACLE → REVERSE → WAIT → DROP FRONTIER
                 # --------------------------------------------------
-                front_dist = self.get_min_front_distance()
-                if front_dist < OBSTACLE_THRESHOLD:
-                    self.stop_motor()
-
-                    back_speed = 0.12  # m/s
-                    dt = (TIME_STEP + 70) / 1000.0
-                    steps = max(1, int(REVERSE_DISTANCE / (back_speed * dt)))
-
-                    lw, rw = self.velocity_to_wheel_speeds(-back_speed, 0.0)
-                    self.set_robot_velocity(lw, rw)
-                    for _ in range(steps):
-                        if self.step(self.time_step) == -1:
-                            break
-                    self.stop_motor()
-
+                if self.obstacle_in_front():
+                    print("[Frontier] Virtual Bumper triggered! Recovering...")
+                    self.recover_from_obstacle()
                     self.lidar_update_map()
                     
-                    # Mark frontier as visited to avoid retrying
+                    # Mark frontier as visited to avoid retrying the same blocked path
                     if not hasattr(self.map_object, "visited_frontiers"):
                         self.map_object.visited_frontiers = []
                     self.map_object.visited_frontiers.append(tuple(frontier_goal))
@@ -1839,6 +1922,10 @@ class MyRobot(Supervisor):
                                 else:
                                     if center_ratio >= 0.20:
                                         self.mark_column(color)
+                                print(f"[FinalPath] Column {color} marked. Breaking path to re-evaluate.")
+                                self.stop_motor()
+
+                                continue
                             except Exception as e:
                                 print(f"[Column] mark failed (final): {e}")
 
@@ -1858,7 +1945,7 @@ class MyRobot(Supervisor):
                 # -----------------------------
                 if timestep_counter % CARPET_CHECK_EVERY == 0:
                     try:
-                        self.mark_green_carpet_permanently(min_pixel_threshold=10)
+                        self.mark_green_carpet_permanently(min_pixel_threshold=10000)
                     except Exception:
                         pass
 
@@ -2184,6 +2271,48 @@ class MyRobot(Supervisor):
         else:
             self.turn_right_milisecond(random_duration)
         self.set_robot_velocity(5, 5)
+        self.step(250)
+
+        
+        
+        self.stop_motor()
+         # Wait for lidar thread / map update
+        for _ in range(40):
+            if self.step(self.time_step) == -1:
+                self.stop_motor()
+                return False
+            
+    def recover_from_obstacle(self, turn_duration=(400, 600)):
+        speeds = random.choice([(-8, -8), (-8, -8)])
+        self.set_robot_velocity(speeds[0], speeds[1])
+        # check if there is enough space to back up
+        # checking back clearanc with get_back_clearance_distance()
+
+        distances = self.get_distances()
+        if distances[2] > 0.25 and distances[3] > 0.25:
+            print("reversing longer [recover from obstacle]")
+            self.step(500)
+        else:
+            print("reversing shorter [recover from obstacle]")
+            self.step(250)
+
+        
+        
+        self.stop_motor()
+            # Wait for lidar thread / map update
+        for _ in range(80):
+            if self.step(self.time_step) == -1:
+                self.stop_motor()
+                return False      
+        
+
+        # random_duration = random.randint(turn_duration[0], turn_duration[1])
+        # # turn randomly left or right
+        # if random.random() < 0.5:
+        #     self.turn_left_milisecond(random_duration)
+        # else:
+        #     self.turn_right_milisecond(random_duration)
+        # self.set_robot_velocity(5, 5)
         self.step(250)
 
        
