@@ -1,0 +1,1507 @@
+#VRML_SIM R2025a utf8
+
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/robots/husarion/rosbot/protos/Rosbot.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/appearances/protos/RoughPine.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/floors/protos/Floor.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/appearances/protos/CarpetFibers.proto"
+
+WorldInfo {
+}
+Viewpoint {
+  orientation -0.5773502691896258 0.5773502691896258 0.5773502691896258 2.0944
+  position 6.121843787103956 -0.18600555121371126 25.982188435904394
+}
+TexturedBackground {
+  texture "empty_office"
+  luminosity 2
+  skybox FALSE
+  skyColor [
+    1 1 1
+  ]
+}
+Rosbot {
+  translation -0.869427 0.587853 0.01
+  rotation 0 0 1 1.8326
+  controller "main"
+  supervisor TRUE
+}
+Solid {
+  translation 1.94873 -1.19117 0.18
+  rotation 0 0 1 2.618
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(17)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation 2.18255 -1.32617 0.18
+  rotation 0 0 1 2.618
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(14)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation 2.73069 -0.70385 0.18
+  rotation 0 0 1 2.618
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(18)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation 1.93873 -0.0538543 0.18
+  rotation 0 0 1 -3.1415853071795863
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(19)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation 2.11873 -0.0538531 0.18
+  rotation 0 0 -1 2.87979
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(24)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation -0.669974 -0.0400001 0.18
+  rotation 0 0 1 1.5708
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(2)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation 0.380026 -0.0299959 0.18
+  rotation 0 0 1 1.5708
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(11)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation -0.669974 -0.84 0.18
+  rotation 0 0 1 1.5708
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(3)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation 0.380026 -0.809997 0.18
+  rotation 0 0 1 1.5708
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(12)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation -0.179974 -0.869999 0.18
+  rotation 0 0 1 1.5708
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(6)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation -0.179977 -0.0699988 0.18
+  rotation 0 0 1 1.5708
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(7)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation -0.179977 0.760001 0.18
+  rotation 0 0 1 1.5708
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(10)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation -0.179978 1.63 0.18
+  rotation 0 0 1 1.5708
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(5)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation -0.179976 -1.58 0.18
+  rotation 0 0 1 1.5708
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(8)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation -0.179975 -2.02 0.18
+  rotation 0 0 1 1.5708
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(9)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation -0.669972 -1.67 0.18
+  rotation 0 0 1 1.5708
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(4)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation 0.380028 -1.66 0.18
+  rotation 0 0 1 1.5708
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(13)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation 1.12608 -0.483222 0.18
+  rotation 0 0 1 2.3562
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(15)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation 1.61913 0.016423 0.18
+  rotation 0 0 1 1.309
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(16)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation 1.61913 0.016423 0.18
+  rotation 0 0 1 1.309
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(21)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation 2.77262 0.658707 0.18
+  rotation 0 0 -1 2.87979
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(22)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation 1.92222 0.81867 0.18
+  rotation 0 0 -1 2.09439
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(23)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation 1.6362 0.83318 0.18
+  rotation 0 0 -1 0.261794
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(20)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation -0.93998 1.31 0.18
+  rotation 0 0 -1 -5.307179586466759e-06
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.5 0.05 0.5
+      }
+    }
+  ]
+  name "WallShort(1)"
+  boundingObject Box {
+    size 0.5 0.05 0.5
+  }
+}
+Solid {
+  translation 0.95003 -1.28 0.18
+  rotation 0 0 1 1.5708
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.2 0.05 0.5
+      }
+    }
+  ]
+  name "WallTiny(1)"
+  boundingObject Box {
+    size 0.2 0.05 0.5
+  }
+}
+Solid {
+  translation 0.720026 0.5 0.18
+  rotation 0 0 1 1.5708
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.2 0.05 0.5
+      }
+    }
+  ]
+  name "WallTiny(5)"
+  boundingObject Box {
+    size 0.2 0.05 0.5
+  }
+}
+Solid {
+  translation 1.73003 -0.64 0.18
+  rotation 0 0 1 1.5708
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.2 0.05 0.5
+      }
+    }
+  ]
+  name "WallTiny(3)"
+  boundingObject Box {
+    size 0.2 0.05 0.5
+  }
+}
+Solid {
+  translation 1.73003 -0.5 0.18
+  rotation 0 0 1 1.5708
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.2 0.05 0.5
+      }
+    }
+  ]
+  name "WallTiny(6)"
+  boundingObject Box {
+    size 0.2 0.05 0.5
+  }
+}
+Solid {
+  translation 0.511449 1.14993 0.18
+  rotation 0 0 1 2.8798
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.2 0.05 0.5
+      }
+    }
+  ]
+  name "WallTiny(4)"
+  boundingObject Box {
+    size 0.2 0.05 0.5
+  }
+}
+Solid {
+  translation 0.342155 3.78721 0.18
+  rotation 0 0 -1 -1.5708053071795867
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.2 0.05 0.5
+      }
+    }
+  ]
+  name "WallTiny(7)"
+  boundingObject Box {
+    size 0.2 0.05 0.5
+  }
+}
+Solid {
+  translation -0.657845 3.78721 0.18
+  rotation 0 0 -1 -1.5708053071795867
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.2 0.05 0.5
+      }
+    }
+  ]
+  name "WallTiny(8)"
+  boundingObject Box {
+    size 0.2 0.05 0.5
+  }
+}
+Solid {
+  translation 0.38178 1.34251 0.18
+  rotation 0 0 -1 -1.5708053071795867
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 0.2 0.05 0.5
+      }
+    }
+  ]
+  name "WallTiny(2)"
+  boundingObject Box {
+    size 0.2 0.05 0.5
+  }
+}
+Solid {
+  translation 2.74592 2.18905 0.18
+  rotation 0 0 1 -1.047195307179586
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 1 0 0
+        roughness 1
+        metalness 0
+      }
+      geometry Box {
+        size 0.5 0.02 0.5
+      }
+    }
+  ]
+  name "WallRed(1)"
+  boundingObject Box {
+    size 0.5 0.02 0.5
+  }
+}
+Solid {
+  translation 3.09998 1.92166 0.18
+  rotation 0 0 1 -0.261795307179586
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 1 0 0
+        roughness 1
+        metalness 0
+      }
+      geometry Box {
+        size 0.5 0.02 0.5
+      }
+    }
+  ]
+  name "WallRed(2)"
+  boundingObject Box {
+    size 0.5 0.02 0.5
+  }
+}
+Solid {
+  translation 2.36998 -1.72834 -0.049
+  rotation 0 0 1 4.07987e-06
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0 1 0
+        roughness 1
+        metalness 0
+      }
+      geometry Box {
+        size 0.2 0.5 0.1
+      }
+    }
+  ]
+  name "Poison"
+  boundingObject Box {
+    size 0.2 0.5 0.1
+  }
+}
+Solid {
+  translation 1.51998 -0.91834 -0.049
+  rotation 0 0 1 4.07987e-06
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0 1 0
+        roughness 1
+        metalness 0
+      }
+      geometry Box {
+        size 0.2 0.5 0.1
+      }
+    }
+  ]
+  name "Poison(1)"
+  boundingObject Box {
+    size 0.2 0.5 0.1
+  }
+}
+Solid {
+  translation 1.52 -2.55 0.18
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(9)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation 1.52 -2.55 0.18
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(10)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation 2.52 -2.55 0.18
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(12)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation 3.03238 -2.07415 0.18
+  rotation 0 0 1 1.5708
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(13)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation 3.03238 -1.07415 0.18
+  rotation 0 0 1 1.5708
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(14)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation 3.03238 -0.07415 0.18
+  rotation 0 0 1 1.5708
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(15)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation 3.03238 0.92585 0.18
+  rotation 0 0 1 1.5708
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(16)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation 0.802376 1.71584 0.18
+  rotation 0 0 1 7.33682e-06
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(17)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation 1.74871 1.84142 0.18
+  rotation 0 0 1 0.261807
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(18)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation 1.27412 -1.72588 0.18
+  rotation 0 0 1 1.0472
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(11)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation -1.2 0.840002 0.18
+  rotation -1.1745e-08 6.78097e-09 -1 -1.5707953071795862
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(1)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation -0.67 0.920002 0.18
+  rotation -1.1745e-08 6.78097e-09 -1 -1.5707953071795862
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(3)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation 0.38 0.920002 0.18
+  rotation -1.1745e-08 6.78097e-09 -1 -1.5707953071795862
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(7)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation 0.38 2.22 0.18
+  rotation -1.1745e-08 6.78097e-09 -1 -1.5707953071795862
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(24)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation 0.645263 3.14944 0.18
+  rotation -1.8526e-08 4.96401e-09 -1 -1.047195307179586
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(25)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation 1.00968 4.03179 0.18
+  rotation 1.45538e-08 -6.02836e-09 1 1.30899
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(33)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation -0.669999 1.89 0.18
+  rotation -1.1745e-08 6.78098e-09 -1 -1.5707953071795862
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(20)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation -0.92016 2.7833 0.18
+  rotation 7.83e-09 -7.83e-09 1 2.09439
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(23)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation -1.40016 3.61467 0.18
+  rotation 7.83e-09 -7.83e-09 1 2.09439
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(32)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation -1.22134 4.29493 0.18
+  rotation 3.84427e-08 1.56885e-14 1 0.523593
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(34)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation -0.33134 4.52493 0.18
+  rotation -0.0033178703340112988 -0.0008890230894983006 0.9999941006697955 -5.307179586466759e-06
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(35)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation 0.63866 4.52493 0.18
+  rotation -0.0033178703340112988 -0.0008890230894983006 0.9999941006697955 -5.307179586466759e-06
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(36)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation -0.179999 2.37 0.18
+  rotation -3.47984e-08 -6.02726e-08 1 -1.5708053071795867
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(21)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation -0.179997 3.33 0.18
+  rotation -3.47984e-08 -6.02726e-08 1 -1.5708053071795867
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(19)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation -0.179991 3.79 0.18
+  rotation 1.27372e-08 -4.75357e-08 1 3.14158
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(22)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation -1.2 -0.149998 0.18
+  rotation -1.1745e-08 6.78097e-09 -1 -1.5707953071795862
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(2)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation -0.730008 -4.32 0.18
+  rotation -0.01791370026920986 -0.004799970072134693 0.9998280150255702 -5.307179586466759e-06
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(5)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation -0.180003 -2.76 0.18
+  rotation -3.47984e-08 -6.02726e-08 1 -1.5708053071795867
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(30)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation -0.180009 -3.75 0.18
+  rotation -3.47984e-08 -6.02726e-08 1 -1.5708053071795867
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(31)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation -0.670004 -2.8 0.18
+  rotation -3.47984e-08 -6.02726e-08 1 -1.5708053071795867
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(26)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation -0.670008 -3.4 0.18
+  rotation -3.47984e-08 -6.02726e-08 1 -1.5708053071795867
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(6)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation 0.39 -2.38 0.18
+  rotation -0.01791370026920986 -0.004799970072134693 0.9998280150255702 -5.307179586466759e-06
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(8)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation -1.2 -1.14 0.18
+  rotation -1.1745e-08 6.78097e-09 -1 -1.5707953071795862
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(4)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation -1.2 -2.14 0.18
+  rotation -1.1745e-08 6.78097e-09 -1 -1.5707953071795862
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(27)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation -1.2 -3.13 0.18
+  rotation -1.1745e-08 6.78097e-09 -1 -1.5707953071795862
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(28)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation -1.2 -3.82 0.18
+  rotation -1.1745e-08 6.78097e-09 -1 -1.5707953071795862
+  children [
+    Shape {
+      appearance RoughPine {
+        textureTransform TextureTransform {
+          scale 2 1
+        }
+      }
+      geometry Box {
+        size 1 0.05 0.5
+      }
+    }
+  ]
+  name "WallMedium(29)"
+  boundingObject Box {
+    size 1 0.05 0.5
+  }
+}
+Solid {
+  translation 1.49 -1.77 0.25
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0 0 1
+        roughness 1
+        metalness 0
+      }
+      geometry Cylinder {
+        radius 0.1
+      }
+    }
+  ]
+  name "BlueCylinder"
+  boundingObject Cylinder {
+    radius 0.1
+  }
+}
+Solid {
+  translation -0.93 0.99 0.25
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 1 1 0
+        roughness 1
+        metalness 0
+      }
+      geometry Cylinder {
+        radius 0.1
+      }
+    }
+  ]
+  name "YellowCylinder"
+  boundingObject Cylinder {
+    radius 0.1
+  }
+}
+Floor {
+  appearance CarpetFibers {
+  }
+}

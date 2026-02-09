@@ -1,6 +1,7 @@
 __pycache__/
-worlds/
 venv/
 *.pyc
 *.png
 *.zip
+*.jpg
+*.wbproj
