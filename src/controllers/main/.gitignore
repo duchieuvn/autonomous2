@@ -1,0 +1,9 @@
+__pycache__/
+venv/
+*.pyc
+*.png
+*.jpg
+*.zip
+*.wbproj
+!figs/*.jpg
+!figs/*.png
