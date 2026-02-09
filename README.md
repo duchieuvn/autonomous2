@@ -64,3 +64,4 @@ pip install -r requirements.txt
 | ------------ | ------------------------------------------------ |
 | Hieu Tran    | [@duchieuvn](https://github.com/duchieuvn)       |
 | Ammar Haider | [@ammarhaiderz](https://github.com/ammarhaiderz) |
+| Arman Pathan |  ------------------------------------------------|
