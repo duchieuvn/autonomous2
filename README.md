@@ -4,15 +4,46 @@
 
 This project implements an autonomous navigation pipeline for a mobile robot in a Webots simulation.
 
-The robot explores the environment, builds an occupancy grid map from **LiDAR**, detects landmarks and hazards with **camera-based color segmentation**, and plans routes using global **A\*** with local **DWA path following**.
+### Project goal
 
-## Requirements
+For all 5 given maps, the robot must:
+
+- Navigate between the **blue** and **yellow** columns (landmarks)
+- Avoid the **green area** (hazard/obstacle region)
+- Find and follow an optimal path from blue to yellow
+
+### Key approaches
+
+- **Environment Mapping**: Builds an occupancy grid map from **LiDAR** data
+- **Perception**: Detects landmarks and hazards with **camera-based color segmentation**
+- **Path Planning**: Plans routes using global **A\*** algorithm with local **DWA path following**
+
+## Results
+
+<table>
+<tr>
+  <td align="center" width="50%"><img src="figs/map2.png" width="400"/><br><b>Map 2</b></td>
+  <td align="center" width="50%"><img src="figs/map3.png" width="400"/><br><b>Map 3</b></td>
+</tr>
+</table>
+
+### Best Records
+
+Navigation times for each maze configuration:
+
+| Map | Start → Yellow | Start → Blue | Blue → Yellow | Total |
+| --- | -------------- | ------------ | ------------- | ----- |
+| 1   | 00:33          | 01:19        | 01:44         | 01:44 |
+| 2   | 00:05          | 01:53        | 02:39         | 02:39 |
+| 3   | 01:02          | 01:29        | 01:46         | 01:46 |
+| 4   | 00:05          | 00:53        | 01:26         | 01:26 |
+| 5   | 00:09          | 01:12        | 01:30         | 01:30 |
+
+## Installation requirements
 
 - Python 3.x
 - Webots
 - Python packages listed in [requirements.txt](requirements.txt)
-
-## Installation
 
 Install the Python dependencies from [requirements.txt](requirements.txt):
 
