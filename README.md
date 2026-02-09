@@ -27,7 +27,7 @@ For all 5 given maps, the robot must:
 </tr>
 </table>
 
-### Best Records
+### Best records
 
 Navigation times for each maze configuration:
 
