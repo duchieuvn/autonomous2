@@ -45,7 +45,7 @@ Navigation times for each maze configuration:
 - Webots
 - Python packages listed in [requirements.txt](requirements.txt)
 
-Install the Python dependencies from [requirements.txt](requirements.txt):
+Install the Python dependencies :
 
 ```bash
 pip install -r requirements.txt
@@ -57,3 +57,10 @@ pip install -r requirements.txt
 2. In the robot node properties, set **controller** to `main`.
 3. Ensure the controller directory points to [src/controllers/main](src/controllers/main) and the entry file is [src/controllers/main/main.py](src/controllers/main/main.py).
 4. Start the simulation.
+
+## Contributors
+
+| Name         | GitHub                                           |
+| ------------ | ------------------------------------------------ |
+| Hieu Tran    | [@duchieuvn](https://github.com/duchieuvn)       |
+| Ammar Haider | [@ammarhaiderz](https://github.com/ammarhaiderz) |
